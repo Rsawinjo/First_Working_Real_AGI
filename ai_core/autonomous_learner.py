@@ -227,7 +227,11 @@ class AutonomousLearner:
         if self.llm_interface:
             try:
                 prompt = f"Generate 2-3 specific subtopics or deeper areas to explore within '{topic}'. Be specific and actionable. Format as a comma-separated list."
-                response = self.llm_interface.generate_response(prompt, max_length=100)
+                response = self._gpu_enhanced_llm_call(
+                    prompt,
+                    {"type": "subtopic_generation", "topic": topic},
+                    "Subtopic Generation"
+                )
                 if response and response.strip():
                     # Parse comma-separated list
                     subtopics = [s.strip() for s in response.split(',') if s.strip() and len(s.strip()) > 3]
@@ -261,7 +265,11 @@ class AutonomousLearner:
         if self.llm_interface:
             try:
                 prompt = f"What are 1-2 foundational concepts or prerequisite knowledge needed to understand '{topic}'? Format as a comma-separated list."
-                response = self.llm_interface.generate_response(prompt, max_length=80)
+                response = self._gpu_enhanced_llm_call(
+                    prompt,
+                    {"type": "prerequisite_identification", "topic": topic},
+                    "Prerequisite Identification"
+                )
                 if response and response.strip():
                     prereqs = [p.strip() for p in response.split(',') if p.strip() and len(p.strip()) > 3]
                     if prereqs:  # Only return if we got valid results
@@ -286,7 +294,11 @@ class AutonomousLearner:
         if self.llm_interface:
             try:
                 prompt = f"After learning about '{topic}', what are 2-3 logical next topics or areas someone might explore? Format as a comma-separated list."
-                response = self.llm_interface.generate_response(prompt, max_length=120)
+                response = self._gpu_enhanced_llm_call(
+                    prompt,
+                    {"type": "next_steps_speculation", "topic": topic},
+                    "Next Steps Speculation"
+                )
                 if response and response.strip():
                     next_steps = [n.strip() for n in response.split(',') if n.strip() and len(n.strip()) > 3]
                     if next_steps:  # Only return if we got valid results
@@ -326,7 +338,7 @@ class AutonomousLearner:
         self.state = LearningState.IDLE
         self.learning_goals = deque(maxlen=50)
         self.active_goal = None
-        self.insights = {}
+        self.insights = {}  # Initialize insights as dict
         self.curiosity_engine = CuriosityEngine()
         self.curiosity_engine.set_parent_learner(self)  # Connect for dynamic topics
         self.meta_cognitive_system = MetaCognitiveSystem()
@@ -579,6 +591,29 @@ class AutonomousLearner:
         self.logger.info("Autonomous mode deactivated")
         return "Autonomous learning session completed."
     
+    def _analyze_knowledge_state(self):
+        """Analyze current knowledge state for autonomous learning"""
+        try:
+            # Simple knowledge state analysis
+            mastered_count = len(self.mastered_topics)
+            goals_count = len(self.learning_goals)
+            insights_count = len(self.insights) if hasattr(self.insights, '__len__') else 0
+            
+            # Calculate knowledge diversity (simple metric)
+            knowledge_diversity = min(100, mastered_count * 2)
+            
+            # Update learning parameters based on knowledge state
+            if mastered_count > 50:
+                self.exploration_rate = min(0.8, self.exploration_rate + 0.1)
+            elif mastered_count < 10:
+                self.exploration_rate = max(0.2, self.exploration_rate - 0.1)
+            
+            self.logger.info(f"Knowledge state: {mastered_count} mastered, {goals_count} goals, {insights_count} insights, diversity: {knowledge_diversity}%")
+            
+        except Exception as e:
+            self.logger.error(f"Error in knowledge state analysis: {e}")
+            # Don't let this break the autonomous loop
+    
     def _autonomous_learning_loop(self):
         """Main autonomous learning loop - The AGI Heart"""
         try:
@@ -728,6 +763,26 @@ class AutonomousLearner:
         except Exception as e:
             logger.error(f"Error in knowledge state analysis: {e}")
             # Continue execution even if analysis fails
+    
+    def _identify_knowledge_gaps(self, knowledge_stats: dict) -> List[str]:
+        """Identify knowledge gaps from statistics"""
+        gaps = []
+        
+        if not knowledge_stats:
+            return ["general knowledge", "problem solving", "learning strategies"]
+        
+        # Simple gap identification based on available stats
+        if isinstance(knowledge_stats, dict):
+            # Look for areas with low coverage
+            for category, count in knowledge_stats.items():
+                if isinstance(count, (int, float)) and count < 5:  # Arbitrary threshold
+                    gaps.append(f"more knowledge in {category}")
+        
+        # Fallback gaps if no specific gaps found
+        if not gaps:
+            gaps = ["interdisciplinary connections", "practical applications", "future trends"]
+        
+        return gaps[:5]  # Limit to 5 gaps
     
     def _generate_learning_goals(self):
         """Generate strategic learning goals using RTX 4090-powered utility analysis"""
@@ -969,9 +1024,10 @@ For each topic, consider:
 
 Rate each topic's ACTUAL utility (0.1-1.0) and explain why. Focus on real-world impact."""
 
-                    ai_response = self.llm_interface.generate_response(
+                    ai_response = self._gpu_enhanced_llm_call(
                         utility_prompt,
-                        context={"type": "utility_assessment", "topics": recent_topics}
+                        {"type": "utility_assessment", "topics": recent_topics},
+                        "Topic Utility Assessment"
                     )
                     
                     if ai_response:
@@ -1081,9 +1137,10 @@ Identify:
 
 List 2-3 specific learning topics that would directly improve our usefulness."""
 
-                ai_response = self.llm_interface.generate_response(
+                ai_response = self._gpu_enhanced_llm_call(
                     opportunity_prompt,
-                    context={"type": "learning_opportunity_detection", "conversation": conversation_text}
+                    {"type": "learning_opportunity_detection", "conversation": conversation_text},
+                    "Learning Opportunity Detection"
                 )
                 
                 if ai_response:
@@ -1933,9 +1990,10 @@ Make them:
 
 Format as numbered list. Focus on depth and originality."""
 
-                ai_response = self.llm_interface.generate_response(
+                ai_response = self._gpu_enhanced_llm_call(
                     prompt,
-                    context={"type": "research_planning", "topic": topic}
+                    {"type": "research_planning", "topic": topic},
+                    "Research Question Generation"
                 )
                 
                 if ai_response:
@@ -2046,20 +2104,15 @@ Based on your research, provide:
 Be insightful, creative, and demonstrate deep understanding. Limit to 200 words."""
 
                 # Use RTX 4090 Beast Mode for insight generation
-                ai_response = self.llm_interface.generate_response(
-                    prompt, 
-                    context={"type": "completion_insight", "goal": goal.topic, "insights": insights}
+                ai_response = self._gpu_enhanced_llm_call(
+                    prompt,
+                    {"type": "completion_insight", "goal": goal.topic, "insights": insights},
+                    "Completion Insight Generation"
                 )
-                
-                # Handle response format (might be tuple or string)
-                if isinstance(ai_response, tuple):
-                    response_text = ai_response[0] if ai_response else ""
-                else:
-                    response_text = ai_response
                 
                 completion_insight = Insight(
                     id=f"completion_{goal.id}",
-                    content=response_text.strip() if response_text else f"Completed learning about {goal.topic}",
+                    content=ai_response.strip() if ai_response else f"Completed learning about {goal.topic}",
                     confidence=0.9,
                     connections=[goal.topic],
                     created_at=datetime.now()
@@ -2886,9 +2939,25 @@ class CuriosityEngine:
     def update_knowledge_map(self, knowledge_stats: Dict):
         """Update internal knowledge representation"""
         # Update interest based on knowledge gaps
-        for topic, stats in knowledge_stats.items():
-            if stats.get('coverage', 0) < 0.5:  # Low coverage = high interest
-                self.interest_map[topic] += 0.1
+        # knowledge_stats comes from KnowledgeBase.get_statistics() which returns
+        # a dict with keys like 'total_entries', 'knowledge_types', etc.
+        
+        if not isinstance(knowledge_stats, dict):
+            return
+            
+        # Use the statistics to adjust curiosity levels
+        total_entries = knowledge_stats.get('total_entries', 0)
+        knowledge_types = knowledge_stats.get('knowledge_types', 0)
+        
+        # If we have few knowledge types, increase curiosity for exploration
+        if knowledge_types < 5:
+            # Boost curiosity for all topics to encourage broader exploration
+            for topic in self.interest_map:
+                self.interest_map[topic] += 0.05
+        
+        # If we have low total entries, increase general curiosity
+        if total_entries < 100:
+            self.boost_curiosity(0.1)
     
     def get_interesting_topics(self) -> List[str]:
         """Get topics of current interest - now dynamic!"""

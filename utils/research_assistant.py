@@ -14,16 +14,17 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 import wikipedia
 import re
+from functools import partial
 
 class ResearchAssistant:
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Optional[Dict] = None):
         self.logger = logging.getLogger(__name__)
         self.config = config or {}
         
         # Research parameters
         self.max_results = self.config.get('MAX_RESEARCH_RESULTS', 5)
         self.research_depth = self.config.get('RESEARCH_DEPTH', 3)
-        self.timeout = 10
+        self.timeout = 30  # Increased timeout for Wikipedia API calls
         
         # Knowledge sources
         self.search_engines = {
@@ -39,51 +40,70 @@ class ResearchAssistant:
         self.last_request_time = 0
         self.min_request_interval = 1.0  # 1 second between requests
     
-    def research_topic(self, topic: str, depth: int = None) -> Optional[str]:
-        """Research a topic and return synthesized information"""
-        try:
-            depth = depth or self.research_depth
-            
-            # Check cache first
-            cache_key = f"{topic.lower()}_{depth}"
-            if cache_key in self.research_cache:
-                cached_result = self.research_cache[cache_key]
-                if (datetime.now() - cached_result['timestamp']).seconds < self.cache_duration:
-                    return cached_result['content']
-            
-            # Extract key terms for research
-            research_terms = self._extract_research_terms(topic)
-            
-            # Gather information from multiple sources
-            research_results = []
-            
-            for term in research_terms[:3]:  # Limit to 3 main terms
-                # Wikipedia search
-                wiki_result = self._search_wikipedia(term)
-                if wiki_result:
-                    research_results.append({
-                        'source': 'wikipedia',
-                        'term': term,
-                        'content': wiki_result
-                    })
+    def research_topic(self, topic: str, depth: Optional[int] = None) -> Optional[str]:
+        """Research a topic and return synthesized information with timeout protection"""
+        
+        def _research_with_timeout():
+            """Execute research with potential timeout"""
+            try:
+                research_depth = depth or self.research_depth
                 
-                # Rate limiting
-                self._rate_limit()
-            
-            # Synthesize findings
-            synthesized_content = self._synthesize_research(research_results, topic)
-            
-            # Cache result
-            self.research_cache[cache_key] = {
-                'content': synthesized_content,
-                'timestamp': datetime.now()
-            }
-            
-            return synthesized_content
-            
-        except Exception as e:
-            self.logger.error(f"Error in research_topic: {e}")
+                # Check cache first
+                cache_key = f"{topic.lower()}_{research_depth}"
+                if cache_key in self.research_cache:
+                    cached_result = self.research_cache[cache_key]
+                    if (datetime.now() - cached_result['timestamp']).seconds < self.cache_duration:
+                        return cached_result['content']
+                
+                # Extract key terms for research
+                research_terms = self._extract_research_terms(topic)
+                
+                # Gather information from multiple sources
+                research_results = []
+                
+                for term in research_terms[:3]:  # Limit to 3 main terms
+                    # Wikipedia search
+                    wiki_result = self._search_wikipedia(term)
+                    if wiki_result:
+                        research_results.append({
+                            'source': 'wikipedia',
+                            'term': term,
+                            'content': wiki_result
+                        })
+                    
+                    # Rate limiting
+                    self._rate_limit()
+                
+                # Synthesize findings
+                synthesized_content = self._synthesize_research(research_results, topic)
+                
+                # Cache result
+                self.research_cache[cache_key] = {
+                    'content': synthesized_content,
+                    'timestamp': datetime.now()
+                }
+                
+                return synthesized_content
+                
+            except Exception as e:
+                self.logger.error(f"Error in research_topic: {e}")
+                return None
+        
+        # Execute with timeout protection (longer timeout for overall research)
+        result: List[Optional[str]] = [None]
+        
+        def target():
+            result[0] = _research_with_timeout()
+        
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(timeout=60)  # Allow up to 60 seconds for overall research
+        
+        if thread.is_alive():
+            self.logger.warning(f"Research for topic '{topic}' timed out after 60s")
             return None
+        
+        return result[0]
     
     def _extract_research_terms(self, topic: str) -> List[str]:
         """Extract key research terms from the topic"""
@@ -119,50 +139,69 @@ class ResearchAssistant:
             return [topic]
     
     def _search_wikipedia(self, term: str) -> Optional[str]:
-        """Search Wikipedia for information on a term"""
-        try:
-            # Search for the term
-            search_results = wikipedia.search(term, results=3)
-            
-            if not search_results:
-                return None
-            
-            # Get summary of the most relevant article
+        """Search Wikipedia for information on a term with timeout protection"""
+        
+        def _wikipedia_search_with_timeout():
+            """Execute Wikipedia search with potential timeout"""
             try:
-                page = wikipedia.page(search_results[0])
-                summary = wikipedia.summary(search_results[0], sentences=3)
+                # Search for the term
+                search_results = wikipedia.search(term, results=3)
                 
-                # Clean and format the summary
-                clean_summary = self._clean_text(summary)
+                if not search_results:
+                    return None
                 
-                return f"Wikipedia: {clean_summary}"
-                
-            except wikipedia.exceptions.DisambiguationError as e:
-                # Handle disambiguation - try the first option
+                # Get summary of the most relevant article
                 try:
-                    if e.options:
-                        page = wikipedia.page(e.options[0])
-                        summary = wikipedia.summary(e.options[0], sentences=2)
-                        clean_summary = self._clean_text(summary)
-                        return f"Wikipedia: {clean_summary}"
-                except:
-                    pass
-            
-            except wikipedia.exceptions.PageError:
-                # Page doesn't exist, try next result
-                if len(search_results) > 1:
+                    page = wikipedia.page(search_results[0])
+                    summary = wikipedia.summary(search_results[0], sentences=3)
+                    
+                    # Clean and format the summary
+                    clean_summary = self._clean_text(summary)
+                    
+                    return f"Wikipedia: {clean_summary}"
+                    
+                except wikipedia.exceptions.DisambiguationError as e:
+                    # Handle disambiguation - try the first option
                     try:
-                        summary = wikipedia.summary(search_results[1], sentences=2)
-                        clean_summary = self._clean_text(summary)
-                        return f"Wikipedia: {clean_summary}"
+                        if e.options:
+                            page = wikipedia.page(e.options[0])
+                            summary = wikipedia.summary(e.options[0], sentences=2)
+                            clean_summary = self._clean_text(summary)
+                            return f"Wikipedia: {clean_summary}"
                     except:
                         pass
-            
+                
+                except wikipedia.exceptions.PageError:
+                    # Page doesn't exist, try next result
+                    if len(search_results) > 1:
+                        try:
+                            summary = wikipedia.summary(search_results[1], sentences=2)
+                            clean_summary = self._clean_text(summary)
+                            return f"Wikipedia: {clean_summary}"
+                        except:
+                            pass
+                
+                return None
+                
+            except Exception as e:
+                self.logger.error(f"Error searching Wikipedia for '{term}': {e}")
+                return None
+        
+        # Execute with timeout protection
+        result: List[Optional[str]] = [None]  # Use list to modify from inner function
+        
+        def target():
+            result[0] = _wikipedia_search_with_timeout()
+        
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(timeout=self.timeout)  # Wait for up to self.timeout seconds
+        
+        if thread.is_alive():
+            self.logger.warning(f"Wikipedia search for '{term}' timed out after {self.timeout}s")
             return None
-            
-        except Exception as e:
-            self.logger.error(f"Error searching Wikipedia for '{term}': {e}")
-            return None
+        
+        return result[0]
     
     def _web_search_fallback(self, term: str) -> Optional[str]:
         """Fallback web search method (placeholder)"""
