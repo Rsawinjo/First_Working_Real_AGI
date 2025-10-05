@@ -5,7 +5,7 @@ Handles Llama 3 model loading, fine-tuning, and fundamental weight modification
 
 import torch
 from transformers import (
-    AutoTokenizer, AutoModelForCausalLM,
+    AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM,
     BitsAndBytesConfig, TrainingArguments, Trainer,
     DataCollatorForLanguageModeling, pipeline
 )
@@ -158,9 +158,16 @@ class LLMInterface:
                 
                 # Enable mixed precision for RTX 4090 (50-100x speedup!)
                 if "cuda" in self.device:
-                    model_kwargs['device_map'] = "auto"
-                    model_kwargs['torch_dtype'] = torch.float16  # FP16 for massive speedup
-                    model_kwargs['use_cache'] = True  # Enable KV cache for faster inference
+                    # For Llama 3, avoid device_map="auto" to prevent device mismatch errors
+                    # Instead, load directly to GPU and manage memory manually
+                    if "llama" in self.model_name.lower() or "meta-llama" in self.model_name.lower():
+                        model_kwargs['torch_dtype'] = torch.float16  # FP16 for massive speedup
+                        model_kwargs['use_cache'] = True  # Enable KV cache for faster inference
+                        # Don't use device_map for Llama 3 to avoid meta device issues
+                    else:
+                        model_kwargs['device_map'] = "auto"
+                        model_kwargs['torch_dtype'] = torch.float16  # FP16 for massive speedup
+                        model_kwargs['use_cache'] = True  # Enable KV cache for faster inference
                 else:
                     model_kwargs['torch_dtype'] = torch.float32
                 
@@ -168,8 +175,15 @@ class LLMInterface:
                     self.model_name,
                     **model_kwargs
                 )
-            except:
-                self.logger.warning("Trying Seq2Seq model format...")
+                
+                # For Llama 3, ensure all tensors are on the correct device
+                if "llama" in self.model_name.lower() or "meta-llama" in self.model_name.lower():
+                    if "cuda" in self.device:
+                        self.model = self.model.to(self.device)
+                        self.logger.info(f"Llama 3 model moved to {self.device}")
+                        
+            except Exception as e:
+                self.logger.warning(f"AutoModelForCausalLM failed: {e}, trying Seq2Seq model format...")
                 model_kwargs_seq2seq = model_kwargs.copy()
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(
                     self.model_name,
@@ -219,7 +233,7 @@ class LLMInterface:
                 return self.load_model()
             return False
     
-    def generate_response(self, user_input: str, context: Dict = None) -> Tuple[str, Dict]:
+    def generate_response(self, user_input: str, context: Optional[Dict] = None) -> Tuple[str, Dict]:
         """Generate response with self-improvement capabilities"""
         start_time = time.time()
         
@@ -234,14 +248,23 @@ class LLMInterface:
                 
                 # Generate
                 max_tokens = self.max_response_length if not self.unlimited_mode else 1000
-                response = self.pipeline(
+                outputs = self.pipeline(
                     conversation_text,
                     max_new_tokens=max_tokens,
                     num_return_sequences=1,
                     temperature=0.7 + (self.performance_metrics['improvement_score'] * 0.2),
                     do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id
-                )[0]['generated_text']
+                    pad_token_id=self.tokenizer.pad_token_id if self.tokenizer and self.tokenizer.pad_token_id else (self.tokenizer.eos_token_id if self.tokenizer else None)
+                )
+                
+                # Extract response from pipeline output
+                if isinstance(outputs, list) and len(outputs) > 0:
+                    if isinstance(outputs[0], dict) and 'generated_text' in outputs[0]:
+                        response = outputs[0]['generated_text']
+                    else:
+                        response = str(outputs[0])
+                else:
+                    response = str(outputs)
                 
                 # Clean and format response
                 response = self._clean_response(response, user_input)
@@ -271,7 +294,7 @@ class LLMInterface:
             self.logger.error(f"Error generating response: {e}")
             return f"I encountered an error: {str(e)}. I'm learning from this to improve.", {}
     
-    def _prepare_context(self, user_input: str, context: Dict = None) -> Dict:
+    def _prepare_context(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """Prepare conversation context with learning enhancements"""
         full_context = context or {}
         
@@ -350,7 +373,7 @@ class LLMInterface:
         # Fallback: simple truncation
         return response[:self.max_response_length] + "..."
     
-    def set_response_config(self, max_length: int = None, unlimited: bool = None, smart_truncation: bool = None):
+    def set_response_config(self, max_length: Optional[int] = None, unlimited: Optional[bool] = None, smart_truncation: Optional[bool] = None):
         """Update response configuration"""
         if max_length is not None:
             self.max_response_length = max_length
@@ -422,7 +445,7 @@ class LLMInterface:
                 self.performance_metrics['improvement_score'] + 0.01, 1.0
             )
     
-    def provide_feedback(self, feedback: str, interaction_id: str = None):
+    def provide_feedback(self, feedback: str, interaction_id: Optional[str] = None):
         """Accept feedback for self-improvement"""
         feedback_entry = {
             'timestamp': datetime.now().isoformat(),

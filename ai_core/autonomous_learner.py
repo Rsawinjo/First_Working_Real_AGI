@@ -69,6 +69,7 @@ class Insight:
     applied_count: int = 0
 
 class AutonomousLearner:
+
     def integrate_feedback(self, feedback_type: str):
         """Integrate user feedback to adjust learning strategy and goal generation."""
         # Feedback types: 'good', 'needs_work', 'interesting', 'perfect'
@@ -310,6 +311,7 @@ class AutonomousLearner:
         self.knowledge_base = knowledge_base
         self.llm_interface = llm_interface
         self.research_assistant = research_assistant
+        self.memory_system = None  # Will be set later if available
         self.gui_callback = None  # Will be set by GUI after initialization
         
         # Phase 2: Enhanced Web Research
@@ -1855,7 +1857,7 @@ Be creative and reveal hidden connections. Keep under 150 words."""
         try:
             # Simple keyword extraction for topics
             message_lower = message.lower()
-            
+
             # Common topic indicators
             topic_keywords = [
                 "python", "programming", "ai", "artificial intelligence", "machine learning",
@@ -1866,12 +1868,12 @@ Be creative and reveal hidden connections. Keep under 150 words."""
                 "technology", "computer", "software", "hardware", "network",
                 "quantum", "blockchain", "cybersecurity", "automation"
             ]
-            
+
             # Extract topics mentioned in message
             for keyword in topic_keywords:
                 if keyword in message_lower:
                     self.add_conversation_topic(keyword)
-            
+
             # Extract noun phrases as potential topics (simple version)
             words = message_lower.split()
             for i in range(len(words) - 1):
@@ -1879,7 +1881,7 @@ Be creative and reveal hidden connections. Keep under 150 words."""
                     potential_topic = f"{words[i]} {words[i+1]}"
                     if any(tech in potential_topic for tech in ["learning", "computing", "development", "science", "intelligence"]):
                         self.add_conversation_topic(potential_topic)
-                        
+
         except Exception as e:
             logger.error(f"Error processing user message: {e}")
     
@@ -2537,6 +2539,317 @@ Be insightful, creative, and demonstrate deep understanding. Limit to 200 words.
         except Exception as e:
             self.logger.error(f"Error generating exploratory topics: {e}")
     
+    def process_user_message(self, user_message: str):
+        """Process user message for topic extraction and AGI learning triggers"""
+        try:
+            # Extract potential learning topics from user message
+            topics = self._extract_topics_from_message(user_message)
+            
+            # Check for explicit learning requests
+            learning_request = self._detect_learning_request(user_message)
+            if learning_request:
+                self._handle_learning_request(learning_request, user_message)
+                return
+            
+            # Process topics for potential learning goals
+            for topic in topics:
+                if topic not in self.mastered_topics and topic not in [g.topic for g in self.learning_goals]:
+                    # Check if topic is interesting enough to learn
+                    if self._is_topic_worth_learning(topic):
+                        self.logger.info(f"Identified interesting topic for learning: {topic}")
+                        # For now, just log - full goal creation can be implemented later
+                        
+        except Exception as e:
+            self.logger.error(f"Error processing user message: {e}")
+    
+    def _extract_topics_from_message(self, message: str) -> List[str]:
+        """Extract potential learning topics from user message"""
+        topics = []
+        
+        # Simple keyword extraction (can be enhanced with NLP)
+        message_lower = message.lower()
+        
+        # Common topic indicators
+        topic_keywords = [
+            "learn", "study", "understand", "explain", "about", "what is", "how does",
+            "tell me about", "research", "explore", "deep dive", "focus on"
+        ]
+        
+        # Extract topics after learning keywords
+        for keyword in topic_keywords:
+            if keyword in message_lower:
+                # Find topic after keyword
+                idx = message_lower.find(keyword)
+                remaining = message_lower[idx + len(keyword):].strip()
+                
+                # Extract noun phrases (simple approach)
+                words = remaining.split()
+                topic_words = []
+                
+                for word in words[:5]:  # Look at first few words
+                    if word not in ["the", "a", "an", "this", "that", "these", "those", "i", "you", "we", "they"]:
+                        topic_words.append(word)
+                    if len(topic_words) >= 3:  # Max 3 words for topic
+                        break
+                
+                if topic_words:
+                    topic = " ".join(topic_words)
+                    if len(topic) > 3:  # Minimum length
+                        topics.append(topic)
+        
+        # Also extract direct mentions of subjects
+        common_subjects = [
+            "ai", "artificial intelligence", "machine learning", "neural networks",
+            "quantum", "physics", "biology", "chemistry", "mathematics", "computer science",
+            "philosophy", "consciousness", "creativity", "learning", "memory", "reasoning",
+            "conversations", "communication", "language", "programming", "algorithms"
+        ]
+        
+        for subject in common_subjects:
+            if subject in message_lower:
+                topics.append(subject)
+        
+        return list(set(topics))  # Remove duplicates
+    
+    def _detect_learning_request(self, message: str) -> Optional[str]:
+        """Detect if user is explicitly requesting learning on a topic"""
+        message_lower = message.lower()
+        
+        learning_indicators = [
+            "learn about", "learn using", "study", "teach me about", "explain",
+            "focus on learning", "agi mode about", "learn using agi mode"
+        ]
+        
+        for indicator in learning_indicators:
+            if indicator in message_lower:
+                # Extract topic after indicator
+                idx = message_lower.find(indicator)
+                topic_part = message_lower[idx + len(indicator):].strip()
+                
+                # Clean up topic
+                topic_part = topic_part.replace("using agi mode", "").replace("using the agi mode", "").strip()
+                
+                if topic_part:
+                    return topic_part
+        
+        return None
+    
+    def _handle_learning_request(self, topic: str, original_message: str):
+        """Handle explicit learning request from user"""
+        self.logger.info(f"Processing learning request for topic: {topic}")
+        
+        # Set learning focus
+        self.current_focus_topic = topic
+        self._report_to_gui(f"🔧 🎯 Learning focus set: {topic}", "goal")
+        
+        # Determine learning parameters based on message
+        priority = 0.7  # Default priority
+        depth = "medium"
+        mode = "balanced"
+        
+        if "deep" in original_message.lower() or "comprehensive" in original_message.lower():
+            depth = "deep"
+            priority = 0.9
+        elif "quick" in original_message.lower() or "basic" in original_message.lower():
+            depth = "shallow"
+            priority = 0.5
+        
+        self._report_to_gui(f"🔧    Priority: {priority}, Depth: {depth.title()}, Mode: {mode.title()}", "goal")
+        
+        # Create focused learning goal
+        self._create_focused_learning_goal(topic, priority, depth, mode)
+    
+    def _create_focused_learning_goal(self, topic: str, priority: float, depth: str, mode: str):
+        """Create a focused learning goal with specific parameters"""
+        goal_id = f"focused_{int(time.time())}_{hash(topic) % 1000}"
+        
+        goal = LearningGoal(
+            id=goal_id,
+            topic=topic,
+            priority=priority,
+            knowledge_gap=f"Need to {depth} understand {topic}",
+            target_depth=3 if depth == "deep" else 2 if depth == "medium" else 1,
+            created_at=datetime.now(),
+            estimated_duration=15 if depth == "shallow" else 45 if depth == "medium" else 90,
+            prerequisites=[],
+            status="active"
+        )
+        
+        self.learning_goals.append(goal)
+        self._save_learning_goal(goal)
+        
+        # Start learning immediately if autonomous mode is active
+        if self.autonomous_mode:
+            self._execute_learning_goal_immediately(topic, priority, depth, mode)
+        
+        self._report_to_gui(f"🎯 Focused learning goal created for '{topic}'", "goal")
+    
+    def _execute_learning_goal_immediately(self, topic: str, priority: float, depth: str, mode: str):
+        """Execute a learning goal immediately"""
+        try:
+            self.logger.info(f"Starting immediate learning on topic: {topic}")
+            
+            # Conduct research
+            research_results = self._conduct_topic_research(topic, depth)
+            
+            # Generate insights
+            insights = self._generate_topic_insights(topic, research_results, depth)
+            
+            # Store knowledge
+            self._store_topic_knowledge(topic, research_results, insights)
+            
+            # Mark as mastered if successful
+            if insights:
+                self.mastered_topics.add(topic)
+                self._save_mastered_topic(topic)
+                self._report_to_gui(f"✅ Topic '{topic}' mastered through focused learning!", "status")
+            
+        except Exception as e:
+            self.logger.error(f"Error in immediate learning execution: {e}")
+            self._report_to_gui(f"❌ Error during focused learning: {e}", "error")
+    
+    def _conduct_topic_research(self, topic: str, depth: str) -> Dict:
+        """Conduct research on a topic"""
+        research_data = {
+            "topic": topic,
+            "depth": depth,
+            "sources": [],
+            "key_findings": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Use web research if available
+        if self.web_researcher:
+            try:
+                self.logger.info(f"Conducting web research on: {topic}")
+                # Use the correct method name and handle async
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    if asyncio.iscoroutinefunction(self.web_researcher.comprehensive_research):
+                        results = loop.run_until_complete(self.web_researcher.comprehensive_research(topic, depth=depth))
+                    else:
+                        results = self.web_researcher.comprehensive_research(topic, depth=depth)
+                    if results and isinstance(results, dict):
+                        research_data["sources"].extend(results.get("sources", []))
+                        research_data["key_findings"].extend(results.get("findings", []))
+                finally:
+                    loop.close()
+            except Exception as e:
+                self.logger.debug(f"Web research failed: {e}")
+        
+        # Use LLM for additional insights if available
+        if self.llm_interface:
+            try:
+                prompt = f"Provide key insights and important facts about '{topic}'. Be comprehensive but concise."
+                response, _ = self.llm_interface.generate_response(prompt)
+                if response:
+                    research_data["key_findings"].append(f"AI Analysis: {response}")
+            except Exception as e:
+                self.logger.debug(f"LLM research failed: {e}")
+        
+        return research_data
+    
+    def _generate_topic_insights(self, topic: str, research_data: Dict, depth: str) -> List[str]:
+        """Generate insights from research data"""
+        insights = []
+        
+        findings = research_data.get("key_findings", [])
+        
+        # Generate insights based on depth
+        if depth == "deep":
+            # More detailed analysis
+            insights.extend(self._analyze_findings_deep(findings))
+        elif depth == "medium":
+            insights.extend(self._analyze_findings_medium(findings))
+        else:
+            insights.extend(self._analyze_findings_shallow(findings))
+        
+        return insights
+    
+    def _analyze_findings_shallow(self, findings: List[str]) -> List[str]:
+        """Shallow analysis of findings"""
+        insights = []
+        for finding in findings[:3]:  # Limit to first 3
+            if len(finding) > 10:
+                insights.append(f"Key point: {finding[:100]}...")
+        return insights
+    
+    def _analyze_findings_medium(self, findings: List[str]) -> List[str]:
+        """Medium depth analysis"""
+        insights = []
+        
+        # Group similar findings
+        if len(findings) >= 2:
+            insights.append(f"Multiple perspectives found on {len(findings)} aspects")
+        
+        # Extract key themes
+        for finding in findings[:5]:
+            if "important" in finding.lower() or "key" in finding.lower():
+                insights.append(finding[:150])
+        
+        return insights
+    
+    def _analyze_findings_deep(self, findings: List[str]) -> List[str]:
+        """Deep analysis of findings"""
+        insights = []
+        
+        # Look for patterns and connections
+        if len(findings) > 3:
+            insights.append(f"Complex topic with {len(findings)} interconnected aspects discovered")
+        
+        # Extract detailed insights
+        for finding in findings:
+            if len(finding) > 50:  # More substantial findings
+                insights.append(finding[:200])
+        
+        return insights
+    
+    def _store_topic_knowledge(self, topic: str, research_data: Dict, insights: List[str]):
+        """Store learned knowledge"""
+        # Store in knowledge base if available
+        if self.knowledge_base:
+            try:
+                content = f"Topic: {topic}\n\nResearch: {research_data}\n\nInsights: {'; '.join(insights)}"
+                self.knowledge_base.store_knowledge(
+                    content=content,
+                    knowledge_type="learned_topic",
+                    confidence=0.8
+                )
+            except Exception as e:
+                self.logger.debug(f"Knowledge storage failed: {e}")
+        
+        # Store in memory system if available
+        if hasattr(self, 'memory_system') and self.memory_system:
+            try:
+                self.memory_system.store_memory(
+                    content=f"Learned about {topic}: {len(insights)} insights gained",
+                    memory_type="semantic",
+                    importance=0.8
+                )
+            except Exception as e:
+                self.logger.debug(f"Memory storage failed: {e}")
+    
+    def _is_topic_worth_learning(self, topic: str) -> bool:
+        """Determine if a topic is worth learning"""
+        # Check if topic is too basic or already known
+        basic_topics = ["hello", "hi", "how are you", "thank you", "goodbye"]
+        if any(basic in topic.lower() for basic in basic_topics):
+            return False
+        
+        # Check topic length and quality
+        if len(topic) < 4 or len(topic) > 50:
+            return False
+        
+        # Check if topic contains meaningful keywords
+        meaningful_keywords = [
+            "ai", "learning", "intelligence", "quantum", "neural", "consciousness",
+            "creativity", "reasoning", "memory", "computation", "algorithm", "system"
+        ]
+        
+        return any(keyword in topic.lower() for keyword in meaningful_keywords)
+
 
 class MetaCognitiveSystem:
     """Analyzes and reflects on the learning process itself"""
