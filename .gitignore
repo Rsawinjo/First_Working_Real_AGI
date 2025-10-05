@@ -1,0 +1,40 @@
+# Large model files (exceed GitHub's 100MB limit)
+data/models/**/*.safetensors
+data/models/**/*.bin
+data/models/**/*.pkl
+data/models/**/pytorch_model.bin
+data/models/**/model.safetensors
+
+# Cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Logs (can be large)
+data/logs/*.log
+
+# Database files (can be large)
+data/*.db
+data/vector_db/*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
