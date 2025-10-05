@@ -1,0 +1,9 @@
+{
+  "conversation_quality": 0.5,
+  "reasoning_accuracy": 0.5,
+  "creativity_score": 0.5,
+  "knowledge_retention": 0.5,
+  "learning_speed": 0.5,
+  "response_coherence": 0.5,
+  "improvement_rate": 0.5
+}

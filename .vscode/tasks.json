@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run AI Self-Improvement System",
+			"type": "shell",
+			"command": "C:/Users/richs/OneDrive/Desktop/AI_AGI_Chat/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
