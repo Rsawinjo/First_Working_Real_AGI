@@ -1,7 +1,7 @@
 # Configuration for the AI Self-Improvement System
 
 # Model Settings
-DEFAULT_MODEL = "microsoft/DialoGPT-medium"
+DEFAULT_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
 FALLBACK_MODEL = "microsoft/DialoGPT-small"
 MODEL_CACHE_DIR = "./data/models"
 
