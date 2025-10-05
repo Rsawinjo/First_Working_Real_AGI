@@ -620,33 +620,33 @@ class AutonomousLearner:
             self._report_to_gui(f"🚀 Starting autonomous learning with {len(self.mastered_topics)} mastered topics in permanent memory", "status")
             
             while self.should_continue_learning and self.autonomous_mode:
-                
-                # Get real-time mastered count
-                current_mastered = len(self.mastered_topics)
-                
-                # 1. SELF-ASSESSMENT: Analyze current knowledge state
-                self._report_to_gui(f"🔍 Analyzing current knowledge state ({current_mastered} mastered topics)", "learning")
-                self._analyze_knowledge_state()
-                
-                # 2. GOAL GENERATION: Identify learning opportunities
-                self._report_to_gui("🎯 Generating strategic learning goals", "goal")
-                
-                # Check if we need to use the Master Discovery Engine
-                current_goals = len(self.learning_goals)
-                if current_goals < 3:  # Always maintain at least 3 goals
-                    self._report_to_gui("🚀 Activating MASTER DISCOVERY ENGINE", "emergency")
-                    self._master_discovery_engine()
-                else:
-                    self._generate_learning_goals()
-                
-                # Debug: Check if we have any goals
-                goals_count = len(self.learning_goals)
-                self._report_to_gui(f"📊 Generated {goals_count} potential learning goals", "status")
-                
-                # 3. PRIORITY SELECTION: Choose most important goal
-                if not self.active_goal:
-                    self._report_to_gui("⚡ Selecting next learning priority", "goal")
-                    self.active_goal = self._select_next_goal()
+                try:
+                    # Get real-time mastered count
+                    current_mastered = len(self.mastered_topics)
+                    
+                    # 1. SELF-ASSESSMENT: Analyze current knowledge state
+                    self._report_to_gui(f"🔍 Analyzing current knowledge state ({current_mastered} mastered topics)", "learning")
+                    self._analyze_knowledge_state()
+                    
+                    # 2. GOAL GENERATION: Identify learning opportunities
+                    self._report_to_gui("🎯 Generating strategic learning goals", "goal")
+                    
+                    # Check if we need to use the Master Discovery Engine
+                    current_goals = len(self.learning_goals)
+                    if current_goals < 3:  # Always maintain at least 3 goals
+                        self._report_to_gui("🚀 Activating MASTER DISCOVERY ENGINE", "emergency")
+                        self._master_discovery_engine()
+                    else:
+                        self._generate_learning_goals()
+                    
+                    # Debug: Check if we have any goals
+                    goals_count = len(self.learning_goals)
+                    self._report_to_gui(f"📊 Generated {goals_count} potential learning goals", "status")
+                    
+                    # 3. PRIORITY SELECTION: Choose most important goal
+                    if not self.active_goal:
+                        self._report_to_gui("⚡ Selecting next learning priority", "goal")
+                        self.active_goal = self._select_next_goal()
                     
                     if not self.active_goal:
                         self._report_to_gui("⚠️ No valid goals found - generating emergency exploratory topics", "error")
@@ -732,8 +732,35 @@ class AutonomousLearner:
                 self._report_to_gui(f"🔄 Cycle #{self.learning_cycles} | Efficiency: {cycle_efficiency:.2f} | Next: {adaptive_delay:.1f}s | Mastered: {len(self.mastered_topics)}", "cycle")
                 time.sleep(adaptive_delay)
                 
-        except Exception as e:
-            logger.error(f"Error in autonomous learning loop: {e}")
+                except Exception as e:
+                    logger.error(f"Error in autonomous learning cycle: {e}")
+                    # 🚨 CRITICAL FIX: Don't let exceptions kill the AGI learning process!
+                    # Instead of exiting, log the error and continue with a recovery delay
+                    self._report_to_gui(f"⚠️ AGI Learning Error: {str(e)[:100]}... Continuing...", "error")
+                    
+                    # Recovery delay to prevent rapid error loops
+                    recovery_delay = 10.0
+                    self._report_to_gui(f"🔄 Recovery delay: {recovery_delay}s", "status")
+                    time.sleep(recovery_delay)
+                    
+                    # Reset problematic state
+                    self.active_goal = None
+                    self.state = LearningState.IDLE
+                    
+                    # Continue the loop instead of exiting
+                    continue
+                    
+                    # Recovery delay to prevent rapid error loops
+                    recovery_delay = 10.0
+                    self._report_to_gui(f"🔄 Recovery delay: {recovery_delay}s", "status")
+                    time.sleep(recovery_delay)
+                    
+                    # Reset problematic state
+                    self.active_goal = None
+                    self.state = LearningState.IDLE
+                    
+                    # Continue the loop instead of exiting
+                    continue
     
     def _analyze_knowledge_state(self):
         """Analyze current knowledge and identify gaps"""
