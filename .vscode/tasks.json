@@ -6,7 +6,7 @@
 			"type": "shell",
 			"command": "C:/Users/richs/OneDrive/Desktop/AI_AGI_Chat/.venv/Scripts/python.exe",
 			"args": [
-				"main.py"
+				"launch_modern.py"
 			],
 			"isBackground": false,
 			"problemMatcher": [],
