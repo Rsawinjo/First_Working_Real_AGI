@@ -767,12 +767,23 @@ class AISystemGUI:
                         metadata.get("response_time", 1.0)
                     )
             
-            # Research mode
+            # Research mode - research AGI's actual learning topics, not user questions
             if self.research_var.get() and self.research_assistant:
-                research_results = self.research_assistant.research_topic(user_text)
-                if research_results:
-                    # Add research context to enhanced response
-                    enhanced_response += f"\n\n📚 Research Context: {research_results[:200]}..."
+                # Get recent learning topics instead of researching user question
+                recent_topics = self._get_recent_learning_topics()
+                if recent_topics:
+                    # Research the most recent learning topic for context
+                    primary_topic = recent_topics.split(',')[0].strip() if ',' in recent_topics else recent_topics
+                    if primary_topic and len(primary_topic) > 3:
+                        research_results = self.research_assistant.research_topic(primary_topic)
+                        if research_results:
+                            # Add research context to enhanced response
+                            enhanced_response += f"\n\n📚 Research Context: {research_results[:300]}..."
+                else:
+                    # Fallback to original behavior if no recent topics
+                    research_results = self.research_assistant.research_topic(user_text)
+                    if research_results:
+                        enhanced_response += f"\n\n📚 Research Context: {research_results[:200]}..."
             
             # Send enhanced response
             self.message_queue.put(("ai_response", {
@@ -1528,6 +1539,56 @@ Report generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             exploration_scale = ttk.Scale(settings_frame, from_=0.1, to=1.0, variable=exploration_var, orient=tk.HORIZONTAL)
             exploration_scale.grid(row=2, column=1, sticky='ew', pady=5, padx=(10, 0))
             
+            # Domain Priorities section
+            ttk.Separator(settings_frame, orient='horizontal').grid(row=3, column=0, columnspan=2, sticky='ew', pady=10)
+            ttk.Label(settings_frame, text="Domain Priorities (0.0-2.0):", font=('TkDefaultFont', 9, 'bold')).grid(row=4, column=0, columnspan=2, sticky='w', pady=(5, 0))
+            
+            # Get current domain priorities
+            domain_priorities = self.autonomous_learner.get_domain_priorities()
+            
+            # Create priority variables and scales
+            priority_vars = {}
+            row = 5
+            for domain, priority in domain_priorities.items():
+                display_name = domain.replace('_', ' ').title()
+                ttk.Label(settings_frame, text=f"{display_name}:").grid(row=row, column=0, sticky='w', pady=2)
+                priority_vars[domain] = tk.DoubleVar(value=priority)
+                priority_scale = ttk.Scale(settings_frame, from_=0.0, to=2.0, variable=priority_vars[domain], orient=tk.HORIZONTAL)
+                priority_scale.grid(row=row, column=1, sticky='ew', pady=2, padx=(10, 0))
+                row += 1
+            
+            # Preset buttons
+            preset_frame = ttk.Frame(settings_frame)
+            preset_frame.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
+            
+            def apply_science_preset():
+                for domain, var in priority_vars.items():
+                    if domain in ['basic_sciences', 'life_sciences', 'medical_sciences', 'specialized_medical', 'diagnostic_imaging', 'biological_subfields']:
+                        var.set(1.5)
+                    elif domain in ['social_sciences', 'engineering_tech']:
+                        var.set(0.8)
+                    elif domain == 'arts_humanities':
+                        var.set(0.5)
+                    else:
+                        var.set(1.0)
+            
+            def apply_humanities_preset():
+                for domain, var in priority_vars.items():
+                    if domain in ['social_sciences', 'arts_humanities']:
+                        var.set(1.5)
+                    elif domain in ['basic_sciences', 'life_sciences', 'medical_sciences']:
+                        var.set(0.8)
+                    else:
+                        var.set(1.0)
+            
+            def reset_priorities():
+                for var in priority_vars.values():
+                    var.set(1.0)
+            
+            ttk.Button(preset_frame, text="Science Focus", command=apply_science_preset).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(preset_frame, text="Humanities Focus", command=apply_humanities_preset).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(preset_frame, text="Reset", command=reset_priorities).pack(side=tk.LEFT)
+            
             settings_frame.columnconfigure(1, weight=1)
             
             # Buttons
@@ -1538,6 +1599,11 @@ Report generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 self.autonomous_learner.learning_intensity = intensity_var.get()
                 self.autonomous_learner.creativity_threshold = creativity_var.get()
                 self.autonomous_learner.exploration_rate = exploration_var.get()
+                
+                # Apply domain priorities
+                for domain, var in priority_vars.items():
+                    self.autonomous_learner.set_domain_priority(domain, var.get())
+                
                 self._add_system_message("⚙️ AGI settings updated")
                 settings_window.destroy()
             
@@ -1698,6 +1764,9 @@ Report generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 self.autonomous_learner.learning_goals.appendleft(focused_goal)  # Add to front
                 self.autonomous_learner._save_learning_goal(focused_goal)
                 
+                # Set user focus topic for utility scoring
+                self.autonomous_learner.user_focus_topic = focus_topic
+                
                 # Also add to conversation topics for future reference
                 self.autonomous_learner.add_conversation_topic(focus_topic)
                 
@@ -1721,6 +1790,11 @@ Report generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         try:
             self.learning_focus_var.set("")
             self.current_focus_var.set("No focus set")
+            
+            # Clear user focus topic in AGI
+            if self.autonomous_learner:
+                self.autonomous_learner.user_focus_topic = None
+            
             self._add_system_message("🔄 Learning focus cleared")
             
         except Exception as e:
@@ -1912,23 +1986,76 @@ Respond as a self-aware AGI who can intelligently discuss its own learning and d
             return "AGI systems initialized and ready"
     
     def _get_recent_learning_topics(self) -> str:
-        """Get recently learned topics for conversation context"""
+        """Get recently learned topics for conversation context with enhanced detail"""
         if not self.autonomous_learner or not hasattr(self.autonomous_learner, 'mastered_topics'):
             return "No recent learning data available"
-        
+
         try:
             # Get a sample of mastered topics
             mastered_topics = list(getattr(self.autonomous_learner, 'mastered_topics', set()))
             if len(mastered_topics) == 0:
                 return "Just starting to build knowledge base"
             elif len(mastered_topics) <= 3:
-                return f"{', '.join(mastered_topics)}"
+                topics_str = f"{', '.join(mastered_topics)}"
+                # Add learning insights if available
+                insights = self._get_learning_insights()
+                if insights:
+                    topics_str += f". {insights}"
+                return topics_str
             else:
-                # Show last 3 as "recent"
+                # Show last 3 as "recent" with more context
                 recent = mastered_topics[-3:]
-                return f"{', '.join(recent)} (and {len(mastered_topics)-3} others)"
+                topics_str = f"{', '.join(recent)}"
+                # Add progress summary
+                progress = self._get_learning_progress_summary()
+                if progress:
+                    topics_str += f" ({progress})"
+                return topics_str
         except:
             return "Various fascinating topics"
+
+    def _get_learning_insights(self) -> str:
+        """Get recent learning insights and achievements"""
+        if not self.autonomous_learner:
+            return ""
+
+        try:
+            insights = []
+            # Check for recent learning goals
+            if hasattr(self.autonomous_learner, 'learning_goals'):
+                recent_goals = [g for g in self.autonomous_learner.learning_goals
+                              if hasattr(g, 'status') and g.status == 'completed'][-2:]
+                if recent_goals:
+                    insights.append(f"recently mastered {len(recent_goals)} new areas")
+
+            # Check for knowledge base growth
+            if hasattr(self.autonomous_learner, 'knowledge_base') and self.autonomous_learner.knowledge_base:
+                kb_stats = self.autonomous_learner.knowledge_base.get_stats()
+                if kb_stats and kb_stats.get('total_entries', 0) > 0:
+                    insights.append(f"expanded knowledge base to {kb_stats['total_entries']} entries")
+
+            return " and ".join(insights) if insights else ""
+        except:
+            return ""
+
+    def _get_learning_progress_summary(self) -> str:
+        """Get a summary of learning progress"""
+        if not self.autonomous_learner:
+            return ""
+
+        try:
+            total_mastered = len(getattr(self.autonomous_learner, 'mastered_topics', set()))
+            active_goals = len([g for g in getattr(self.autonomous_learner, 'learning_goals', [])
+                              if hasattr(g, 'status') and g.status in ['pending', 'active']])
+
+            if total_mastered > 0:
+                summary_parts = [f"{total_mastered} topics mastered"]
+                if active_goals > 0:
+                    summary_parts.append(f"{active_goals} active learning goals")
+                return ", ".join(summary_parts)
+        except:
+            pass
+        return ""
     
     def _get_current_learning_goal(self) -> str:
         """Get current learning goal if available"""

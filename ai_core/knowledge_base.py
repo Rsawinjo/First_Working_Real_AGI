@@ -941,7 +941,7 @@ class KnowledgeBase:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT content, confidence, metadata FROM knowledge 
+                    SELECT content, confidence, metadata FROM knowledge_entries 
                     WHERE content LIKE ? OR tags LIKE ?
                     ORDER BY confidence DESC LIMIT ?
                 ''', (f"%{query}%", f"%{query}%", limit))
@@ -967,17 +967,17 @@ class KnowledgeBase:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Basic stats
-            cursor.execute('SELECT COUNT(*) FROM knowledge')
+            # Basic stats from knowledge_entries table
+            cursor.execute('SELECT COUNT(*) FROM knowledge_entries')
             total_entries = cursor.fetchone()[0]
             
-            cursor.execute('SELECT COUNT(DISTINCT knowledge_type) FROM knowledge')
+            cursor.execute('SELECT COUNT(DISTINCT knowledge_type) FROM knowledge_entries')
             knowledge_types = cursor.fetchone()[0]
             
-            cursor.execute('SELECT knowledge_type, COUNT(*) FROM knowledge GROUP BY knowledge_type')
+            cursor.execute('SELECT knowledge_type, COUNT(*) FROM knowledge_entries GROUP BY knowledge_type')
             type_distribution = dict(cursor.fetchall())
             
-            cursor.execute('SELECT AVG(confidence) FROM knowledge')
+            cursor.execute('SELECT AVG(confidence) FROM knowledge_entries')
             avg_confidence = cursor.fetchone()[0] or 0.0
             
             conn.close()

@@ -354,11 +354,18 @@ class AutonomousLearner:
         self.web_research_enabled = True
         self.parallel_learning = True
         
-        # Dynamic Topic Discovery
-        self.conversation_topics = set()  # Topics from user conversations
-        self.mastered_topics = set()      # Topics already learned - will be loaded from database
-        self.trending_topics = []         # Current trending topics
-        self.topic_depth_map = {}         # Track learning depth per topic
+        # Domain prioritization for focused learning
+        self.domain_priorities = {
+            'basic_sciences': 1.0,
+            'life_sciences': 1.0,
+            'medical_sciences': 1.0,
+            'social_sciences': 1.0,
+            'arts_humanities': 1.0,
+            'engineering_tech': 1.0,
+            'specialized_medical': 1.0,
+            'diagnostic_imaging': 1.0,
+            'biological_subfields': 1.0
+        }
         
         # Goal Generation Cache (simple in-memory cache to avoid repeated LLM calls)
         self.goal_generation_cache = {}
@@ -502,27 +509,47 @@ class AutonomousLearner:
             except Exception:
                 self.logger.exception("Error reporting to GUI")
     
-    def _gpu_enhanced_llm_call(self, prompt: str, context: Dict, operation_type: str = "processing") -> str:
-        """Make GPU-enhanced LLM call with monitoring and optimization"""
-        if not self.llm_interface:
-            return ""
-        
+    def _gpu_enhanced_llm_call(self, prompt: str, context: Dict, operation_type: str = "processing", timeout_seconds: int = 60) -> str:
+        """Make GPU-enhanced LLM call with monitoring, optimization, and timeout"""
         start_time = time.time()
         
-        # Log GPU usage before call
-        if GPU_AVAILABLE:
-            gpu_memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
-            gpu_name = torch.cuda.get_device_name(0)
-            self.logger.info(f"🚀 RTX 4090 {operation_type}: Starting GPU computation")
-        
         try:
-            # Make the enhanced LLM call
-            response = self.llm_interface.generate_response(prompt, context)
+            if not self.llm_interface:
+                return ""
             
-            # Extract response if it's a tuple (response, metadata)
-            if isinstance(response, tuple):
-                response = response[0]
+            import threading
             
+            result = {"response": "", "completed": False}
+            
+            def llm_worker():
+                try:
+                    # Make the enhanced LLM call
+                    response = self.llm_interface.generate_response(prompt, context)
+                    
+                    # Extract response if it's a tuple (response, metadata)
+                    if isinstance(response, tuple):
+                        response = response[0]
+                    
+                    result["response"] = response
+                    result["completed"] = True
+                except Exception as e:
+                    self.logger.error(f"LLM call failed: {e}")
+                    result["response"] = ""
+                    result["completed"] = True
+            
+            # Start LLM call in background thread
+            worker_thread = threading.Thread(target=llm_worker, daemon=True)
+            worker_thread.start()
+            
+            # Wait for completion with timeout
+            worker_thread.join(timeout=timeout_seconds)
+            
+            if not result["completed"]:
+                self.logger.warning(f"🚨 LLM call timed out after {timeout_seconds}s for {operation_type}")
+                self._report_to_gui(f"⏰ TIMEOUT: {operation_type} took too long ({timeout_seconds}s)", "warning")
+                return ""
+            
+            response = result["response"]
             processing_time = time.time() - start_time
             self.gpu_computation_time += processing_time
             
@@ -557,8 +584,11 @@ class AutonomousLearner:
                 if not hasattr(self, '_cuda_error_logged'):
                     self.logger.warning("CUDA error suppressed: device-side assert triggered. See logs for details if needed.")
                     self._cuda_error_logged = True
-                return ""  # Suppress from chat response
-            self.logger.exception(f"❌ Error in GPU-enhanced {operation_type}")
+                return ""
+            
+            processing_time = time.time() - start_time
+            self.logger.error(f"🚨 GPU computation failed for {operation_type}: {error_message} (took {processing_time:.2f}s)")
+            self._report_to_gui(f"❌ GPU Error: {operation_type} failed", "error")
             return ""
     
     def start_autonomous_mode(self, intensity: float = 0.5):
@@ -591,67 +621,43 @@ class AutonomousLearner:
         self.logger.info("Autonomous mode deactivated")
         return "Autonomous learning session completed."
     
-    def _analyze_knowledge_state(self):
-        """Analyze current knowledge state for autonomous learning"""
-        try:
-            # Simple knowledge state analysis
-            mastered_count = len(self.mastered_topics)
-            goals_count = len(self.learning_goals)
-            insights_count = len(self.insights) if hasattr(self.insights, '__len__') else 0
-            
-            # Calculate knowledge diversity (simple metric)
-            knowledge_diversity = min(100, mastered_count * 2)
-            
-            # Update learning parameters based on knowledge state
-            if mastered_count > 50:
-                self.exploration_rate = min(0.8, self.exploration_rate + 0.1)
-            elif mastered_count < 10:
-                self.exploration_rate = max(0.2, self.exploration_rate - 0.1)
-            
-            self.logger.info(f"Knowledge state: {mastered_count} mastered, {goals_count} goals, {insights_count} insights, diversity: {knowledge_diversity}%")
-            
-        except Exception as e:
-            self.logger.error(f"Error in knowledge state analysis: {e}")
-            # Don't let this break the autonomous loop
-    
     def _autonomous_learning_loop(self):
         """Main autonomous learning loop - The AGI Heart"""
         try:
             self._report_to_gui(f"🚀 Starting autonomous learning with {len(self.mastered_topics)} mastered topics in permanent memory", "status")
             
             while self.should_continue_learning and self.autonomous_mode:
-                try:
-                    # Get real-time mastered count
-                    current_mastered = len(self.mastered_topics)
-                    
-                    # 1. SELF-ASSESSMENT: Analyze current knowledge state
-                    self._report_to_gui(f"🔍 Analyzing current knowledge state ({current_mastered} mastered topics)", "learning")
-                    self._analyze_knowledge_state()
+                # Get real-time mastered count
+                current_mastered = len(self.mastered_topics)
+                
+                # 1. SELF-ASSESSMENT: Analyze current knowledge state
+                self._report_to_gui(f"🔍 Analyzing current knowledge state ({current_mastered} mastered topics)", "learning")
+                self._analyze_knowledge_state()
                     
                     # 2. GOAL GENERATION: Identify learning opportunities
-                    self._report_to_gui("🎯 Generating strategic learning goals", "goal")
-                    
-                    # Check if we need to use the Master Discovery Engine
-                    current_goals = len(self.learning_goals)
-                    if current_goals < 3:  # Always maintain at least 3 goals
-                        self._report_to_gui("🚀 Activating MASTER DISCOVERY ENGINE", "emergency")
-                        self._master_discovery_engine()
-                    else:
-                        self._generate_learning_goals()
-                    
-                    # Debug: Check if we have any goals
-                    goals_count = len(self.learning_goals)
-                    self._report_to_gui(f"📊 Generated {goals_count} potential learning goals", "status")
-                    
-                    # 3. PRIORITY SELECTION: Choose most important goal
-                    if not self.active_goal:
-                        self._report_to_gui("⚡ Selecting next learning priority", "goal")
-                        self.active_goal = self._select_next_goal()
-                    
-                    if not self.active_goal:
-                        self._report_to_gui("⚠️ No valid goals found - generating emergency exploratory topics", "error")
-                        self._generate_emergency_topics()
-                        self.active_goal = self._select_next_goal()
+                self._report_to_gui("🎯 Generating strategic learning goals", "goal")
+                
+                # Check if we need to use the Master Discovery Engine
+                current_goals = len(self.learning_goals)
+                if current_goals < 3:  # Always maintain at least 3 goals
+                    self._report_to_gui("🚀 Activating MASTER DISCOVERY ENGINE", "emergency")
+                    self._master_discovery_engine()
+                else:
+                    self._generate_learning_goals()
+                
+                # Debug: Check if we have any goals
+                goals_count = len(self.learning_goals)
+                self._report_to_gui(f"📊 Generated {goals_count} potential learning goals", "status")
+                
+                # 3. PRIORITY SELECTION: Choose most important goal
+                if not self.active_goal:
+                    self._report_to_gui("⚡ Selecting next learning priority", "goal")
+                    self.active_goal = self._select_next_goal()
+                
+                if not self.active_goal:
+                    self._report_to_gui("⚠️ No valid goals found - generating emergency exploratory topics", "error")
+                    self._generate_emergency_topics()
+                    self.active_goal = self._select_next_goal()
                
                 # 4. EXECUTE LEARNING: Deep dive into the goal
                 if self.active_goal:
@@ -731,39 +737,13 @@ class AutonomousLearner:
                 
                 self._report_to_gui(f"🔄 Cycle #{self.learning_cycles} | Efficiency: {cycle_efficiency:.2f} | Next: {adaptive_delay:.1f}s | Mastered: {len(self.mastered_topics)}", "cycle")
                 time.sleep(adaptive_delay)
-                
-                except Exception as e:
-                    logger.error(f"Error in autonomous learning cycle: {e}")
-                    # 🚨 CRITICAL FIX: Don't let exceptions kill the AGI learning process!
-                    # Instead of exiting, log the error and continue with a recovery delay
-                    self._report_to_gui(f"⚠️ AGI Learning Error: {str(e)[:100]}... Continuing...", "error")
-                    
-                    # Recovery delay to prevent rapid error loops
-                    recovery_delay = 10.0
-                    self._report_to_gui(f"🔄 Recovery delay: {recovery_delay}s", "status")
-                    time.sleep(recovery_delay)
-                    
-                    # Reset problematic state
-                    self.active_goal = None
-                    self.state = LearningState.IDLE
-                    
-                    # Continue the loop instead of exiting
-                    continue
-                    
-                    # Recovery delay to prevent rapid error loops
-                    recovery_delay = 10.0
-                    self._report_to_gui(f"🔄 Recovery delay: {recovery_delay}s", "status")
-                    time.sleep(recovery_delay)
-                    
-                    # Reset problematic state
-                    self.active_goal = None
-                    self.state = LearningState.IDLE
-                    
-                    # Continue the loop instead of exiting
-                    continue
+        
+        except Exception as e:
+            logger.error(f"Critical error in autonomous learning loop: {e}")
+            self._report_to_gui(f"🚨 CRITICAL AGI ERROR: {str(e)[:100]}... Shutting down learning", "error")
+            self.should_continue_learning = False
     
     def _analyze_knowledge_state(self):
-        """Analyze current knowledge and identify gaps"""
         self.state = LearningState.ANALYZING
         
         try:
@@ -791,26 +771,6 @@ class AutonomousLearner:
             logger.error(f"Error in knowledge state analysis: {e}")
             # Continue execution even if analysis fails
     
-    def _identify_knowledge_gaps(self, knowledge_stats: dict) -> List[str]:
-        """Identify knowledge gaps from statistics"""
-        gaps = []
-        
-        if not knowledge_stats:
-            return ["general knowledge", "problem solving", "learning strategies"]
-        
-        # Simple gap identification based on available stats
-        if isinstance(knowledge_stats, dict):
-            # Look for areas with low coverage
-            for category, count in knowledge_stats.items():
-                if isinstance(count, (int, float)) and count < 5:  # Arbitrary threshold
-                    gaps.append(f"more knowledge in {category}")
-        
-        # Fallback gaps if no specific gaps found
-        if not gaps:
-            gaps = ["interdisciplinary connections", "practical applications", "future trends"]
-        
-        return gaps[:5]  # Limit to 5 gaps
-    
     def _generate_learning_goals(self):
         """Generate strategic learning goals using RTX 4090-powered utility analysis"""
         try:
@@ -822,30 +782,48 @@ class AutonomousLearner:
                 
                 strategic_prompt = f"""As a strategic AI researcher, identify 5 COMPLETELY NEW topics to learn next.
 
-CRITICAL: You must AVOID these already mastered topics:
+CRITICAL REQUIREMENTS - STRICTLY AVOID:
 {', '.join(mastered_topics) if mastered_topics else 'None'}
 
-IMPORTANT: Generate topics that are fundamentally different from the mastered list above.
-Do NOT generate variations, extensions, or related versions of existing topics.
-Each topic must be a completely new domain or field.
+MANDATORY: Each topic must be in a TOTALLY DIFFERENT field/domain than ANY mastered topic above.
+FORBIDDEN: No variations, extensions, related topics, or similar concepts.
+FORBIDDEN: No topics that share ANY keywords with mastered topics.
+FORBIDDEN: No topics in similar scientific/technological domains.
 
 Context:
 - User focus: {user_focus or 'Open exploration'}
 - Current capabilities: AGI system with web research, knowledge synthesis
 
-Generate NOVEL topics that:
-1. Are in ENTIRELY DIFFERENT fields than the mastered topics above
-2. Have NO overlap with existing knowledge domains
-3. Build breakthrough capabilities in new areas
-4. Connect multiple NEW domains
-5. Enable future discoveries in unexplored territories
+Generate topics that are in ENTIRELY NEW fields:
+1. Completely different scientific domains
+2. Unrelated technological areas  
+3. Novel interdisciplinary combinations never explored
+4. Breakthrough fields with no existing knowledge overlap
+5. Revolutionary concepts in unexplored territories
 
-Examples of good novel topics (in different fields):
-- quantum biology and molecular computing
-- swarm robotics and collective intelligence
-- neuromorphic materials science
-- computational archaeology
-- synthetic consciousness frameworks
+EXAMPLES of ACCEPTABLE novel topics:
+- astrobiology and xenolinguistics
+- quantum gravity and consciousness studies
+- bio-luminescent computing architectures
+- temporal mechanics and causality engineering
+- fractal dimension mathematics applications
+- holographic data storage paradigms
+- archaeoastronomy and ancient astronomical knowledge
+- psychogeography and urban emotional mapping
+- bioacoustics and sound-based biological communication
+- chronobiology and time-based physiological rhythms
+
+REJECTED examples (too similar to existing knowledge):
+- machine learning optimization
+- neural network architectures
+- computer vision applications
+- natural language processing
+- reinforcement learning algorithms
+- quantum computing
+- synthetic biology
+- neuromorphic engineering
+- consciousness studies
+- AI ethics or philosophy
 
 Format as numbered list of COMPLETELY NEW topics only."""
 
@@ -874,7 +852,7 @@ Format as numbered list of COMPLETELY NEW topics only."""
             self.logger.error(f"Error generating strategic learning goals: {e}")
             self._generate_curiosity_based_goals()
     
-    def _parse_strategic_topics(self, ai_response: str, user_focus: str = None) -> List[Dict]:
+    def _parse_strategic_topics(self, ai_response: str, user_focus: Optional[str] = None) -> List[Dict]:
         """Parse AI response into strategic topic priorities"""
         strategic_topics = []
         lines = [line.strip() for line in ai_response.split('\n') if line.strip()]
@@ -927,43 +905,87 @@ Format as numbered list of COMPLETELY NEW topics only."""
         
         return strategic_topics
     
-    def _calculate_topic_utility(self, topic: str, user_focus: str = None) -> float:
-        """Calculate the utility score of a learning topic"""
+    def _calculate_topic_utility(self, topic: str, user_focus: Optional[str] = None) -> float:
+        """Calculate the utility score of a learning topic with business focus"""
         utility_score = 0.5  # Base utility
-        
+
+        # 🚀 USER BUSINESS FOCUS: Massive boost for monetization topics
+        business_keywords = [
+            'money', 'revenue', 'profit', 'income', 'business', 'monetization', 'passive income',
+            'automation', 'bots', 'trading', 'investment', 'startup', 'entrepreneurship',
+            'marketing', 'sales', 'ecommerce', 'freelance', 'consulting', 'service',
+            'app development', 'software business', 'saas', 'subscription', 'affiliate',
+            'dropshipping', 'reselling', 'arbitrage', 'crypto trading', 'nft', 'defi',
+            'content creation', 'youtube automation', 'social media marketing', 'influencer',
+            'digital products', 'course creation', 'coaching', 'consulting business'
+        ]
+
+        topic_lower = topic.lower()
+        for keyword in business_keywords:
+            if keyword in topic_lower:
+                utility_score += 0.25  # Massive boost for business topics
+                break  # Only count once
+
         # Boost for user focus alignment
         if user_focus and user_focus.lower() in topic.lower():
             utility_score += 0.3
-        
-        # Boost for high-value keywords
+
+        # Boost for practical AI/business applications
+        practical_keywords = [
+            'ai automation', 'ai business', 'ai revenue', 'ai monetization', 'ai trading',
+            'machine learning business', 'ai consulting', 'ai development', 'ai products',
+            'chatbot business', 'ai marketplace', 'ai services', 'ai platform'
+        ]
+
+        for keyword in practical_keywords:
+            if keyword in topic_lower:
+                utility_score += 0.2
+
+        # Moderate boost for high-value keywords (but less than business)
         high_value_keywords = [
             'ai', 'machine learning', 'automation', 'optimization', 'efficiency',
             'breakthrough', 'innovation', 'synthesis', 'integration', 'scalable',
-            'practical', 'commercial', 'revenue', 'solution', 'algorithm',
-            'neural', 'quantum', 'robotics', 'biotech', 'fintech', 'security'
+            'practical', 'commercial', 'solution', 'algorithm'
         ]
-        
-        topic_lower = topic.lower()
+
         for keyword in high_value_keywords:
             if keyword in topic_lower:
-                utility_score += 0.1
-        
-        # Boost for interdisciplinary connections
+                utility_score += 0.08
+
+        # Small boost for interdisciplinary connections
         interdisciplinary_keywords = [
             'bio', 'neuro', 'cyber', 'nano', 'quantum', 'crypto', 'blockchain',
             'iot', 'edge', 'cloud', 'distributed', 'autonomous'
         ]
-        
+
         for keyword in interdisciplinary_keywords:
             if keyword in topic_lower:
-                utility_score += 0.05
-        
+                utility_score += 0.03
+
+        # 🚫 PENALIZE pure scientific research (material science, physics, etc.)
+        scientific_penalty_keywords = [
+            'material science', 'physics', 'chemistry', 'biology research', 'neuroscience',
+            'quantum physics', 'nanotechnology research', 'biotechnology research',
+            'theoretical physics', 'experimental physics', 'molecular biology',
+            'crystallography', 'spectroscopy', 'microscopy', 'laboratory techniques'
+        ]
+
+        for keyword in scientific_penalty_keywords:
+            if keyword in topic_lower:
+                utility_score -= 0.2  # Significant penalty for pure science
+                break
+
         # Penalize if too similar to mastered topics
         for mastered in self.mastered_topics:
             if len(set(topic.lower().split()) & set(mastered.lower().split())) > 1:
                 utility_score -= 0.15
-        
-        return min(utility_score, 1.0)
+
+        # 🚫 EXTRA PENALTY: Strongly penalize topics already in learning queue
+        for goal in self.learning_goals:
+            if goal.topic and len(set(topic.lower().split()) & set(goal.topic.lower().split())) > 1:
+                utility_score -= 0.3  # Heavy penalty for duplicates in queue
+
+        return min(max(utility_score, 0.1), 1.0)  # Clamp between 0.1 and 1.0
     
     def _create_strategic_goals(self, strategic_topics: List[Dict]):
         """Create learning goals from strategic topics"""
@@ -1145,6 +1167,12 @@ Format: Just list 3 topics, one per line."""
         if hasattr(self, 'user_focus_topic') and self.user_focus_topic:
             context_parts.append(f"User focus: {self.user_focus_topic}")
         
+        # Conversation focus (temporary)
+        if hasattr(self, 'conversation_focus_topic') and self.conversation_focus_topic:
+            if hasattr(self, 'conversation_focus_timestamp') and self.conversation_focus_timestamp:
+                if time.time() - self.conversation_focus_timestamp < 600:  # Within 10 minutes
+                    context_parts.append(f"Conversation focus: {self.conversation_focus_topic}")
+        
         return '; '.join(context_parts) if context_parts else "Building foundational AGI capabilities"
     
     def detect_learning_opportunities_from_conversation(self, conversation_text: str):
@@ -1176,7 +1204,7 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
                         if len(opportunity) > 10:  # Substantial opportunity
                             # Create high-priority goal
                             goal = LearningGoal(
-                                id=f"opportunity_{int(time.time())}_{hash(opportunity) % 1000}",
+                                id=f"user_focus_opportunity_{int(time.time())}_{hash(opportunity) % 1000}",
                                 topic=opportunity,
                                 priority=0.95,  # Very high priority - user-driven
                                 knowledge_gap=f"Opportunity from conversation: {opportunity}",
@@ -1253,7 +1281,15 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         
         # Enhanced filtering with similarity checking
         fresh_goals = []
+        forced_goals = []  # User-forced goals that bypass similarity filtering
+        
         for goal in available_goals:
+            # User-forced goals (from GUI topic selection) bypass all filtering
+            if "user_focus_" in goal.id and not goal.id.startswith("user_focus_opportunity_"):
+                forced_goals.append(goal)
+                self._report_to_gui(f"🎯 FORCED GOAL: {goal.topic} (bypassing similarity check)", "goal")
+                continue
+                
             is_fresh = True
             goal_topic_lower = goal.topic.lower()
             # Clean the goal topic for comparison
@@ -1285,20 +1321,38 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
             self._report_to_gui(f"🚨 MASTER ENGINE: All {len(available_goals)} topics too similar to {len(self.mastered_topics)} mastered - FORCING DISCOVERY", "emergency")
             return self._force_discovery_goal()
         
-        # Prioritize user-focused goals
-        user_goals = [g for g in fresh_goals if "user_focus" in g.id]
-        if user_goals:
-            selected = max(user_goals, key=lambda g: g.priority)
-            self._report_to_gui(f"🎯 MASTER: Selected USER FOCUS: {selected.topic}", "goal")
+        # Prioritize FORCED user goals first (bypass all filtering)
+        if forced_goals:
+            selected = max(forced_goals, key=lambda g: g.priority)
+            self._report_to_gui(f"🎯 FORCED USER GOAL: {selected.topic} (highest priority)", "goal")
         else:
-            selected = max(fresh_goals, key=lambda g: g.priority)
-            self._report_to_gui(f"✅ MASTER: Selected fresh goal: {selected.topic} (priority: {selected.priority:.2f})", "goal")
+            # Then prioritize user-focused goals (conversation-detected)
+            user_goals = [g for g in fresh_goals if "user_focus" in g.id]
+            if user_goals:
+                selected = max(user_goals, key=lambda g: g.priority)
+                self._report_to_gui(f"🎯 MASTER: Selected USER FOCUS: {selected.topic}", "goal")
+            else:
+                # Check for conversation-focused goals (recent conversation topics)
+                conversation_goals = []
+                if self.conversation_focus_topic and self.conversation_focus_timestamp:
+                    # Only consider conversation focus if it's recent (within last 10 minutes)
+                    if time.time() - self.conversation_focus_timestamp < 600:
+                        conversation_goals = [g for g in fresh_goals 
+                                            if self.conversation_focus_topic.lower() in g.topic.lower() 
+                                            or g.topic.lower() in self.conversation_focus_topic.lower()]
+                
+                if conversation_goals:
+                    selected = max(conversation_goals, key=lambda g: g.priority)
+                    self._report_to_gui(f"💬 MASTER: Selected CONVERSATION FOCUS: {selected.topic}", "goal")
+                else:
+                    selected = max(fresh_goals, key=lambda g: g.priority)
+                    self._report_to_gui(f"✅ MASTER: Selected fresh goal: {selected.topic} (priority: {selected.priority:.2f})", "goal")
         
         selected.status = "active"
         return selected
     
     def _topics_are_similar(self, topic1: str, topic2: str) -> bool:
-        """Fuzzy similarity checking using rapidfuzz, with configurable threshold"""
+        """Refined similarity checking that distinguishes between different domains and contexts"""
         from rapidfuzz import fuzz
         from config import settings
 
@@ -1307,7 +1361,7 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         clean_topic2 = topic2.split('[')[0].strip().lower()
 
         # Remove common prefixes that make topics seem different when they're not
-        prefixes_to_remove = ['advanced ', 'experimental ', 'breakthrough ', 'future of ', 'theoretical foundations of ', 'innovative approaches to ', 'practical implementation of ']
+        prefixes_to_remove = ['advanced ', 'experimental ', 'breakthrough ', 'future of ', 'theoretical foundations of ', 'innovative approaches to ', 'practical implementation of ', 'new ', 'modern ', 'contemporary ', 'cutting-edge ', 'state-of-the-art ', 'revolutionary ', 'pioneering ', 'groundbreaking ']
         for prefix in prefixes_to_remove:
             if clean_topic1.startswith(prefix):
                 clean_topic1 = clean_topic1[len(prefix):]
@@ -1318,13 +1372,64 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         if clean_topic1 == clean_topic2:
             return True
 
-        # Use rapidfuzz for fuzzy matching
+        # Check for significant keyword overlap with domain awareness
+        words1 = set(clean_topic1.split())
+        words2 = set(clean_topic2.split())
+
+        # Define domain-specific terms to better distinguish contexts
+        ai_computing_terms = {'ai', 'artificial', 'intelligence', 'machine', 'learning', 'neural', 'network', 'deep', 'computer', 'computing', 'algorithm', 'data', 'software', 'programming', 'robotics', 'automation', 'quantum', 'synthetic'}
+        science_medical_terms = {'biology', 'chemistry', 'physics', 'mathematics', 'medicine', 'genetics', 'neuroscience', 'psychology', 'microbiology', 'virology', 'immunology', 'cardiology', 'oncology', 'radiology', 'surgery', 'anatomy', 'physiology', 'pathology', 'toxicology', 'endocrinology', 'rheumatology', 'dermatology', 'ophthalmology', 'otolaryngology', 'urology', 'gynecology', 'pediatrics', 'geriatrics', 'sports', 'forensic', 'criminology', 'materials', 'nanotechnology', 'biotechnology', 'environmental', 'climatology', 'hydrology', 'seismology', 'volcanology', 'paleontology', 'entomology', 'ornithology', 'herpetology', 'ichthyology', 'mammalogy', 'botany', 'mycology', 'phycology', 'bacteriology', 'parasitology', 'zoology', 'ethology', 'behavioral', 'cognitive', 'developmental', 'social', 'clinical', 'counseling', 'educational', 'industrial', 'forensic', 'sports', 'environmental', 'evolutionary', 'molecular', 'cell', 'developmental', 'ecological', 'population', 'quantitative', 'biochemical', 'genomics', 'proteomics', 'metabolomics', 'transcriptomics', 'pharmacogenomics', 'toxicogenomics', 'nutrigenomics', 'epigenetics', 'chromosome', 'nuclear', 'organelle', 'membrane', 'cytoskeleton', 'extracellular', 'matrix', 'signal', 'transduction', 'cell', 'cycle', 'regulation', 'apoptosis', 'autophagy', 'necrosis', 'inflammation', 'immunity', 'autoimmunity', 'allergy', 'hypersensitivity', 'transplantation', 'tumor', 'vaccinology', 'serology', 'hematology', 'coagulation', 'thrombosis', 'hemophilia', 'anemia', 'leukemia', 'lymphoma', 'myeloma', 'myelodysplastic', 'bone', 'marrow', 'stem', 'regenerative', 'tissue', 'engineering', 'biomaterials', 'biomedical', 'medical', 'devices', 'prosthetics', 'orthotics', 'rehabilitation', 'assistive', 'technology', 'telemedicine', 'e-health', 'm-health', 'health', 'informatics', 'imaging', 'diagnostic', 'therapeutic', 'interventional', 'nuclear', 'molecular', 'optical', 'ultrasound', 'magnetic', 'resonance', 'computed', 'tomography', 'positron', 'emission', 'single', 'photon', 'bioluminescence', 'fluorescence', 'photoacoustic', 'elastography', 'thermography', 'electrical', 'impedance', 'diffuse', 'optical', 'near-infrared', 'spectroscopy', 'functional', 'electroencephalography', 'magnetoencephalography', 'transcranial', 'stimulation', 'deep', 'brain', 'vagus', 'nerve', 'spinal', 'cord', 'peripheral', 'biofeedback', 'neurofeedback', 'heart', 'rate', 'variability', 'galvanic', 'skin', 'response', 'electromyography', 'electroneurography', 'nerve', 'conduction', 'evoked', 'potentials', 'polysomnography', 'sleep', 'chronobiology', 'amyotrophic', 'lateral', 'sclerosis', 'huntington', 'parkinson', 'alzheimer', 'frontotemporal', 'dementia', 'vascular', 'lewy', 'body', 'corticobasal', 'degeneration', 'progressive', 'supranuclear', 'palsy', 'multiple', 'system', 'atrophy', 'spinocerebellar', 'ataxias', 'friedreich', 'machado-joseph', 'wilson', 'menkes', 'prion', 'creutzfeldt-jakob', 'variant', 'gerstmann-sträussler-scheinker', 'fatal', 'familial', 'insomnia', 'kuru', 'scrapie', 'bovine', 'spongiform', 'encephalopathy', 'chronic', 'wasting', 'feline', 'exotic', 'ungulate', 'transmissible', 'mink', 'cryptococcal', 'meningitis', 'coccidioidal', 'histoplasmal', 'blastomycosis', 'paracoccidioidomycosis', 'sporotrichosis', 'chromoblastomycosis', 'mycetoma', 'eumycetoma', 'actinomycetoma', 'nocardiosis', 'actinomycosis', 'botryomycosis', 'rhinoscleroma', 'granulomatous', 'amebic', 'encephalitis', 'primary', 'meningoencephalitis', 'acanthamoeba', 'keratitis', 'balamuthia', 'mandrillaris', 'sappinia', 'diploidea', 'toxoplasmosis', 'toxoplasmic', 'congenital', 'ocular', 'neurosyphilis', 'tabes', 'dorsalis', 'general', 'paresis', 'meningovascular', 'syphilis', 'gumma', 'sarcoidosis', 'neurosarcoidosis', 'cardiac', 'pulmonary', 'osseous', 'hepatic', 'renal', 'endocrine', 'neuromuscular'}
+
+        # Check if topics are from different domains (AI/tech vs science/medical)
+        topic1_has_ai = bool(words1 & ai_computing_terms)
+        topic1_has_science = bool(words1 & science_medical_terms)
+        topic2_has_ai = bool(words2 & ai_computing_terms)
+        topic2_has_science = bool(words2 & science_medical_terms)
+
+        # If one topic is AI/tech and the other is science/medical, they're NOT similar
+        # This prevents false positives when mastered topics contain scientific terms but are actually AI topics
+        if (topic1_has_ai and not topic1_has_science) and (topic2_has_science and not topic2_has_ai):
+            return False
+        if (topic2_has_ai and not topic2_has_science) and (topic1_has_science and not topic1_has_ai):
+            return False
+
+        # Additional check: if topic1 has AI terms but topic2 has no AI terms and many science terms, not similar
+        ai_only_topic1 = topic1_has_ai and not topic1_has_science
+        science_only_topic2 = topic2_has_science and not topic2_has_ai
+        if ai_only_topic1 and science_only_topic2:
+            return False
+
+        ai_only_topic2 = topic2_has_ai and not topic2_has_science
+        science_only_topic1 = topic1_has_science and not topic1_has_ai
+        if ai_only_topic2 and science_only_topic1:
+            return False
+
+        # Only consider similar if more than 4 words overlap AND they represent significant overlap
+        overlap = words1 & words2
+        if len(overlap) > 4:
+            # Calculate overlap ratio - require at least 50% of words to overlap
+            min_words = min(len(words1), len(words2))
+            if min_words > 0 and (len(overlap) / min_words) >= 0.5:
+                return True
+
+        # If both topics contain AI-related terms, they're likely similar (keep this for AI topics)
+        ai_overlap = words1 & ai_computing_terms and words2 & ai_computing_terms
+        if ai_overlap:
+            return True
+
+        # If one topic is contained within the other AND they're substantial topics, they're similar
+        if clean_topic1 in clean_topic2 or clean_topic2 in clean_topic1:
+            # Only flag as similar if the contained topic is longer than 4 words
+            if len(clean_topic1.split()) > 4 or len(clean_topic2.split()) > 4:
+                return True
+
+        # Use rapidfuzz for fuzzy matching with higher threshold
         similarity_score = fuzz.token_sort_ratio(clean_topic1, clean_topic2)
-        threshold = getattr(settings, 'TOPIC_SIMILARITY_THRESHOLD', 80)
+        threshold = getattr(settings, 'TOPIC_SIMILARITY_THRESHOLD', 70)  # Even higher threshold
         return similarity_score >= threshold
     
     def _force_discovery_goal(self) -> LearningGoal:
-        """🚀 MASTER SOLUTION: Force create completely unique discovery goals"""
+        """🚀 MASTER SOLUTION: Force create completely unique discovery goals using dynamic generation"""
         
         import random
         import hashlib
@@ -1334,57 +1439,181 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         random_seed = str(random.randint(10000, 99999))
         unique_hash = hashlib.md5((timestamp_seed + random_seed).encode()).hexdigest()[:8]
         
-        # Mega-diverse topic pools to prevent repetition forever
-        advanced_fields = [
-            "quantum biology and molecular computing", "neuromorphic space computing", "bio-integrated electronics",
-            "metamaterial acoustic engineering", "synthetic consciousness theory", "temporal database systems",
-            "photonic neural networks", "molecular robotics", "programmable matter physics",
-            "topological information theory", "bio-mimetic algorithms", "crystalline memory systems",
-            "synthetic biology programming", "nano-scale manufacturing", "quantum error correction protocols",
-            "holographic data storage", "magnetic levitation transportation", "superconducting quantum circuits",
-            "optical quantum computing", "biological circuit design", "memristive neural computing"
+        # 🚀 DYNAMIC TOPIC GENERATION: Create completely novel topics instead of using prebaked lists
+        # Generate topics that are guaranteed to be new and not in any predefined pool
+        
+        # Core domains for combination (exclude AI/computing entirely)
+        core_domains = [
+            "biology", "chemistry", "physics", "mathematics", "astronomy", "geology", "oceanography", "meteorology", "ecology", "genetics", "neuroscience", "psychology",
+            "sociology", "anthropology", "archaeology", "history", "philosophy", "linguistics", "economics", "political science", "geography", "music", "art", "literature",
+            "theater", "dance", "architecture", "engineering", "medicine", "pharmacology", "microbiology", "virology", "immunology", "cardiology", "oncology", "radiology",
+            "surgery", "anatomy", "physiology", "pathology", "toxicology", "endocrinology", "rheumatology", "dermatology", "ophthalmology", "otolaryngology", "urology",
+            "gynecology", "pediatrics", "geriatrics", "sports medicine", "forensic science", "criminology", "materials science",
+            "nanotechnology", "biotechnology", "environmental science", "climatology", "hydrology", "seismology", "volcanology", "paleontology", "entomology",
+            "ornithology", "herpetology", "ichthyology", "mammalogy", "botany", "mycology", "phycology", "bacteriology", "parasitology", "zoology", "ethology",
+            "behavioral science", "cognitive science", "developmental psychology", "social psychology", "clinical psychology", "counseling psychology",
+            "educational psychology", "industrial psychology", "forensic psychology", "sports psychology", "environmental psychology", "evolutionary biology",
+            "molecular biology", "cell biology", "developmental biology", "ecological genetics", "population genetics", "quantitative genetics", "biochemical genetics",
+            "genomics", "proteomics", "metabolomics", "transcriptomics", "pharmacogenomics", "toxicogenomics", "nutrigenomics", "epigenetics", "chromosome biology",
+            "nuclear biology", "organelle biology", "membrane biology", "cytoskeleton biology", "extracellular matrix biology", "signal transduction", "cell cycle regulation",
+            "apoptosis", "autophagy", "necrosis", "inflammation", "immunity", "autoimmunity", "allergy", "hypersensitivity", "transplantation immunology", "tumor immunology",
+            "vaccinology", "serology", "hematology", "coagulation", "thrombosis", "hemophilia", "anemia", "leukemia", "lymphoma", "myeloma", "myelodysplastic syndromes",
+            "bone marrow transplantation", "stem cell biology", "regenerative medicine", "tissue engineering", "biomaterials", "biomedical engineering", "medical devices",
+            "prosthetics", "orthotics", "rehabilitation engineering", "assistive technology", "telemedicine", "e-health", "m-health", "health informatics", "medical imaging",
+            "diagnostic imaging", "therapeutic imaging", "interventional radiology", "nuclear medicine", "molecular imaging", "optical imaging", "ultrasound imaging",
+            "magnetic resonance imaging", "computed tomography", "positron emission tomography", "single photon emission computed tomography", "bioluminescence imaging",
+            "fluorescence imaging", "photoacoustic imaging", "elastography", "thermography", "electrical impedance tomography", "diffuse optical tomography", "near-infrared spectroscopy",
+            "functional near-infrared spectroscopy", "electroencephalography", "magnetoencephalography", "transcranial magnetic stimulation", "transcranial direct current stimulation",
+            "deep brain stimulation", "vagus nerve stimulation", "spinal cord stimulation", "peripheral nerve stimulation", "biofeedback", "neurofeedback", "heart rate variability",
+            "galvanic skin response", "electromyography", "electroneurography", "nerve conduction studies", "evoked potentials", "polysomnography", "sleep medicine", "chronobiology",
+            "amyotrophic lateral sclerosis", "Huntington's disease", "Parkinson's disease", "Alzheimer's disease", "frontotemporal dementia", "vascular dementia", "Lewy body dementia",
+            "corticobasal degeneration", "progressive supranuclear palsy", "multiple system atrophy", "spinocerebellar ataxias", "Friedreich's ataxia", "Machado-Joseph disease",
+            "Wilson's disease", "Menkes disease", "prion diseases", "Creutzfeldt-Jakob disease", "variant Creutzfeldt-Jakob disease", "Gerstmann-Sträussler-Scheinker syndrome",
+            "fatal familial insomnia", "kuru", "scrapie", "bovine spongiform encephalopathy", "chronic wasting disease", "transmissible mink encephalopathy",
+            "feline spongiform encephalopathy", "exotic ungulate encephalopathy", "transmissible spongiform encephalopathies", "cryptococcal meningitis",
+            "coccidioidal meningitis", "histoplasmal meningitis", "blastomycosis", "paracoccidioidomycosis", "sporotrichosis", "chromoblastomycosis", "mycetoma",
+            "eumycetoma", "actinomycetoma", "nocardiosis", "actinomycosis", "botryomycosis", "rhinoscleroma", "granulomatous amebic encephalitis",
+            "primary amebic meningoencephalitis", "Acanthamoeba keratitis", "Acanthamoeba granulomatous encephalitis", "Balamuthia mandrillaris encephalitis",
+            "Sappinia diploidea encephalitis", "toxoplasmosis", "toxoplasmic encephalitis", "congenital toxoplasmosis", "ocular toxoplasmosis", "neurosyphilis",
+            "tabes dorsalis", "general paresis", "meningovascular syphilis", "gumma", "sarcoidosis", "neurosarcoidosis", "cardiac sarcoidosis", "pulmonary sarcoidosis",
+            "ocular sarcoidosis", "cutaneous sarcoidosis", "osseous sarcoidosis", "hepatic sarcoidosis", "renal sarcoidosis", "endocrine sarcoidosis", "neuromuscular sarcoidosis"
         ]
         
-        emerging_tech = [
-            "lab-grown neural tissue", "self-healing smart materials", "4D printing manufacturing",
-            "atmospheric carbon capture", "fusion energy containment", "space elevator carbon nanotubes",
-            "artificial photosynthesis systems", "quantum dot solar cells", "bio-reactive surfaces",
-            "smart dust sensor networks", "molecular assemblers", "gravitational wave interferometry",
-            "dark matter detection", "synthetic spider silk", "room-temperature superconductors",
-            "brain-computer neural interfaces", "artificial muscle actuators", "self-assembling robots"
+        # Connecting concepts for combination
+        connecting_concepts = [
+            "and", "with", "using", "through", "via", "based on", "integrated with", "combined with",
+            "applied to", "in relation to", "concerning", "regarding", "about", "involving",
+            "incorporating", "utilizing", "employing", "featuring", "including", "encompassing",
+            "covering", "addressing", "exploring", "investigating", "examining", "analyzing",
+            "studying", "researching", "developing", "advancing", "improving", "enhancing",
+            "optimizing", "refining", "evolving", "transforming", "revolutionizing", "innovating",
+            "pioneering", "groundbreaking", "cutting-edge", "state-of-the-art", "advanced",
+            "sophisticated", "complex", "intricate", "elaborate", "detailed", "comprehensive"
         ]
         
-        interdisciplinary = [
-            "music-mathematics pattern theory", "art-AI creative collaboration", "philosophy-physics consciousness",
-            "linguistics-computation language models", "biology-architecture living buildings", "psychology-robotics emotion",
-            "economics-ecosystem modeling", "anthropology-AI cultural ethics", "geology-space terraforming",
-            "chemistry-quantum molecular simulation", "sociology-swarm intelligence", "archaeology-time measurement theory"
-        ]
+        # Categorize domains for better diversity
+        domain_categories = {
+            'basic_sciences': ["biology", "chemistry", "physics", "mathematics", "astronomy", "geology", "oceanography", "meteorology", "ecology"],
+            'life_sciences': ["genetics", "neuroscience", "psychology", "microbiology", "virology", "immunology", "molecular biology", "cell biology", "developmental biology", "evolutionary biology", "biochemistry", "biophysics"],
+            'medical_sciences': ["medicine", "cardiology", "oncology", "radiology", "surgery", "anatomy", "physiology", "pathology", "toxicology", "endocrinology", "rheumatology", "dermatology", "ophthalmology", "otolaryngology", "urology", "gynecology", "pediatrics", "geriatrics", "sports medicine", "forensic science"],
+            'social_sciences': ["sociology", "anthropology", "archaeology", "history", "philosophy", "linguistics", "economics", "political science", "geography"],
+            'arts_humanities': ["music", "art", "literature", "theater", "dance", "architecture"],
+            'engineering_tech': ["engineering", "materials science", "nanotechnology", "biotechnology", "biomedical engineering", "environmental science"],
+            'specialized_medical': ["amyotrophic lateral sclerosis", "Huntington's disease", "Parkinson's disease", "Alzheimer's disease", "frontotemporal dementia", "vascular dementia", "Lewy body dementia", "corticobasal degeneration", "progressive supranuclear palsy", "multiple system atrophy", "spinocerebellar ataxias", "Friedreich's ataxia", "Machado-Joseph disease", "Wilson's disease", "Menkes disease", "prion diseases", "Creutzfeldt-Jakob disease", "variant Creutzfeldt-Jakob disease", "Gerstmann-Sträussler-Scheinker syndrome", "fatal familial insomnia", "kuru", "scrapie", "bovine spongiform encephalopathy", "chronic wasting disease", "transmissible mink encephalopathy", "feline spongiform encephalopathy", "exotic ungulate encephalopathy", "transmissible spongiform encephalopathies", "cryptococcal meningitis", "coccidioidal meningitis", "histoplasmal meningitis", "blastomycosis", "paracoccidioidomycosis", "sporotrichosis", "chromoblastomycosis", "mycetoma", "eumycetoma", "actinomycetoma", "nocardiosis", "actinomycosis", "botryomycosis", "rhinoscleroma", "granulomatous amebic encephalitis", "primary amebic meningoencephalitis", "Acanthamoeba keratitis", "Acanthamoeba granulomatous encephalitis", "Balamuthia mandrillaris encephalitis", "Sappinia diploidea encephalitis", "toxoplasmosis", "toxoplasmic encephalitis", "congenital toxoplasmosis", "ocular toxoplasmosis", "neurosyphilis", "tabes dorsalis", "general paresis", "meningovascular syphilis", "gumma", "sarcoidosis", "neurosarcoidosis", "cardiac sarcoidosis", "pulmonary sarcoidosis", "ocular sarcoidosis", "cutaneous sarcoidosis", "osseous sarcoidosis", "hepatic sarcoidosis", "renal sarcoidosis", "endocrine sarcoidosis", "neuromuscular sarcoidosis"],
+            'diagnostic_imaging': ["medical imaging", "diagnostic imaging", "therapeutic imaging", "interventional radiology", "nuclear medicine", "molecular imaging", "optical imaging", "ultrasound imaging", "magnetic resonance imaging", "computed tomography", "positron emission tomography", "single photon emission computed tomography", "bioluminescence imaging", "fluorescence imaging", "photoacoustic imaging", "elastography", "thermography", "electrical impedance tomography", "diffuse optical tomography", "near-infrared spectroscopy", "functional near-infrared spectroscopy", "electroencephalography", "magnetoencephalography", "transcranial magnetic stimulation", "transcranial direct current stimulation", "deep brain stimulation", "vagus nerve stimulation", "spinal cord stimulation", "peripheral nerve stimulation", "biofeedback", "neurofeedback", "heart rate variability", "galvanic skin response", "electromyography", "electroneurography", "nerve conduction studies", "evoked potentials", "polysomnography", "sleep medicine", "chronobiology"],
+            'biological_subfields': ["entomology", "ornithology", "herpetology", "ichthyology", "mammalogy", "botany", "mycology", "phycology", "bacteriology", "parasitology", "zoology", "ethology", "behavioral science", "cognitive science", "developmental psychology", "social psychology", "clinical psychology", "counseling psychology", "educational psychology", "industrial psychology", "forensic psychology", "sports psychology", "environmental psychology", "ecological genetics", "population genetics", "quantitative genetics", "biochemical genetics", "genomics", "proteomics", "metabolomics", "transcriptomics", "pharmacogenomics", "toxicogenomics", "nutrigenomics", "epigenetics", "chromosome biology", "nuclear biology", "organelle biology", "membrane biology", "cytoskeleton biology", "extracellular matrix biology", "signal transduction", "cell cycle regulation", "apoptosis", "autophagy", "necrosis", "inflammation", "immunity", "autoimmunity", "allergy", "hypersensitivity", "transplantation immunology", "tumor immunology", "vaccinology", "serology", "hematology", "coagulation", "thrombosis", "hemophilia", "anemia", "leukemia", "lymphoma", "myeloma", "myelodysplastic syndromes", "bone marrow transplantation", "stem cell biology", "regenerative medicine", "tissue engineering", "biomaterials", "prosthetics", "orthotics", "rehabilitation engineering", "assistive technology", "telemedicine", "e-health", "m-health", "health informatics"]
+        }
         
-        # Select random category and topic
-        all_topics = advanced_fields + emerging_tech + interdisciplinary
-        base_topic = random.choice(all_topics)
+        # Generate completely novel topic by combining diverse domains with prioritization
+        attempts = 0
+        base_topic = None
         
-        # Add unique variations
+        while attempts < 100:  # More attempts for truly novel generation
+            # Pick domains from different categories with priority weighting
+            # Higher priority categories are more likely to be selected
+            category_weights = {cat: self.domain_priorities.get(cat, 1.0) 
+                              for cat in domain_categories.keys()}
+            
+            selected_categories = []
+            available_categories = list(domain_categories.keys())
+            
+            # Select categories based on weights
+            while len(selected_categories) < min(3, len(available_categories)):
+                # Weighted random selection
+                total_weight = sum(category_weights[cat] for cat in available_categories 
+                                 if cat not in selected_categories)
+                if total_weight == 0:
+                    break
+                    
+                pick = random.uniform(0, total_weight)
+                current_weight = 0
+                
+                for cat in available_categories:
+                    if cat not in selected_categories:
+                        current_weight += category_weights[cat]
+                        if pick <= current_weight:
+                            selected_categories.append(cat)
+                            break
+            
+            # Ensure we have at least one category
+            if not selected_categories:
+                selected_categories = [random.choice(list(domain_categories.keys()))]
+            
+            selected_domains = []
+            
+            for category in selected_categories:
+                if domain_categories[category]:
+                    domain = random.choice(domain_categories[category])
+                    selected_domains.append(domain)
+            
+            # Ensure we have at least 2 domains
+            while len(selected_domains) < 2:
+                remaining_categories = [cat for cat in domain_categories.keys() if cat not in selected_categories]
+                if remaining_categories:
+                    new_cat = random.choice(remaining_categories)
+                    selected_categories.append(new_cat)
+                    domain = random.choice(domain_categories[new_cat])
+                    selected_domains.append(domain)
+                else:
+                    # Fallback to random from all domains
+                    selected_domains.append(random.choice(core_domains))
+            
+            # Pick a connecting concept
+            connector = random.choice(connecting_concepts)
+            
+            # Create novel combination
+            if len(selected_domains) == 2:
+                candidate_topic = f"{selected_domains[0]} {connector} {selected_domains[1]}"
+            else:
+                candidate_topic = f"{selected_domains[0]}, {selected_domains[1]} {connector} {selected_domains[2]}"
+            
+            # Check if this topic or similar topics are already mastered
+            is_already_mastered = False
+            for mastered in self.mastered_topics:
+                if self._topics_are_similar(candidate_topic, mastered):
+                    is_already_mastered = True
+                    break
+            
+            if not is_already_mastered:
+                base_topic = candidate_topic
+                break
+                
+            attempts += 1
+        
+        # If we couldn't find a fresh topic, use a more extreme combination
+        if base_topic is None:
+            # Use 4 domains for maximum novelty
+            selected_domains = random.sample(core_domains, 4)
+            connector1 = random.choice(connecting_concepts)
+            connector2 = random.choice(connecting_concepts)
+            base_topic = f"{selected_domains[0]} {connector1} {selected_domains[1]} {connector2} {selected_domains[2]} and {selected_domains[3]}"
+            self._report_to_gui(f"⚠️ Used extreme combination after 100 attempts: {base_topic}", "warning")
+        
+        # Add unique variations with timestamp for guaranteed uniqueness
         variations = [
-            f"experimental {base_topic}",
-            f"advanced {base_topic} research",
-            f"breakthrough {base_topic} applications", 
-            f"future of {base_topic}",
-            f"{base_topic} innovation pathways"
+            f"exploring {base_topic}",
+            f"advanced research in {base_topic}",
+            f"breakthrough developments in {base_topic}", 
+            f"future implications of {base_topic}",
+            f"innovative approaches to {base_topic}",
+            f"comprehensive analysis of {base_topic}",
+            f"systematic investigation of {base_topic}",
+            f"pioneering work in {base_topic}",
+            f"cutting-edge developments in {base_topic}",
+            f"state-of-the-art research in {base_topic}"
         ]
         
         final_topic = f"{random.choice(variations)} [{unique_hash}]"
         
         # Create ultra-high priority forced discovery goal
         forced_goal = LearningGoal(
-            id=f"master_discovery_{unique_hash}",
+            id=f"dynamic_discovery_{unique_hash}",
             topic=final_topic,
-            priority=0.95,  # Highest priority
-            knowledge_gap=f"Master Discovery Engine: {final_topic}",
-            target_depth=3,
+            priority=0.98,  # Even higher priority for dynamic generation
+            knowledge_gap=f"Dynamic Discovery Engine: {final_topic}",
+            target_depth=4,
             created_at=datetime.now(),
-            estimated_duration=45,
+            estimated_duration=50,
             prerequisites=[],
             status="pending"
         )
@@ -1392,8 +1621,8 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         # Add to goals queue
         self.learning_goals.append(forced_goal)
         
-        self._report_to_gui(f"🚀 MASTER DISCOVERY: {final_topic}", "emergency")
-        self.logger.info(f"Master Discovery Engine created: {final_topic}")
+        self._report_to_gui(f"🚀 DYNAMIC DISCOVERY: {final_topic}", "emergency")
+        self.logger.info(f"Dynamic Discovery Engine created: {final_topic}")
         
         forced_goal.status = "active"
         return forced_goal
@@ -1733,16 +1962,6 @@ Be creative and reveal hidden connections. Keep under 150 words."""
         except Exception as e:
             self.logger.error(f"Error synthesizing knowledge: {e}")
             return {}
-            
-            # Generate synthesis insights
-            for connection in connections:
-                synthesis_insight = self._create_synthesis_insight(connection)
-                if synthesis_insight:
-                    self.insights[synthesis_insight.id] = synthesis_insight
-                    self.session_stats['knowledge_connections'] += 1
-            
-        except Exception as e:
-            logger.error(f"Error in knowledge synthesis: {e}")
     
     def _meta_cognitive_reflection(self):
         """Reflect on the learning process itself"""
@@ -1936,38 +2155,39 @@ Be creative and reveal hidden connections. Keep under 150 words."""
         if new_depth >= 4:
             self.mark_topic_mastered(topic, new_depth)
     
-    def process_user_message(self, message: str):
-        """Process user message to extract learning topics"""
+    def _set_conversation_focus(self, message: str):
+        """Set temporary conversation focus based on user message content"""
         try:
-            # Simple keyword extraction for topics
+            # Only set focus if no explicit user focus is set
+            if self.user_focus_topic:
+                return
+                
+            # Extract potential focus topics from the message
             message_lower = message.lower()
-
-            # Common topic indicators
-            topic_keywords = [
-                "python", "programming", "ai", "artificial intelligence", "machine learning",
-                "data science", "web development", "javascript", "react", "django",
-                "science", "mathematics", "physics", "chemistry", "biology",
-                "business", "finance", "marketing", "design", "art",
-                "music", "philosophy", "psychology", "history", "literature",
-                "technology", "computer", "software", "hardware", "network",
-                "quantum", "blockchain", "cybersecurity", "automation"
-            ]
-
-            # Extract topics mentioned in message
-            for keyword in topic_keywords:
-                if keyword in message_lower:
-                    self.add_conversation_topic(keyword)
-
-            # Extract noun phrases as potential topics (simple version)
-            words = message_lower.split()
-            for i in range(len(words) - 1):
-                if len(words[i]) > 3 and len(words[i+1]) > 3:
-                    potential_topic = f"{words[i]} {words[i+1]}"
-                    if any(tech in potential_topic for tech in ["learning", "computing", "development", "science", "intelligence"]):
-                        self.add_conversation_topic(potential_topic)
-
+            
+            # Look for questions about learning or knowledge
+            learning_indicators = ["what have you learned", "what do you know", "tell me about", 
+                                 "how does", "what is", "explain", "teach me"]
+            
+            for indicator in learning_indicators:
+                if indicator in message_lower:
+                    # Extract topic after the indicator
+                    idx = message_lower.find(indicator)
+                    topic_part = message[idx + len(indicator):].strip()
+                    
+                    # Clean up the topic
+                    if topic_part:
+                        # Remove common question words
+                        topic_part = topic_part.replace("about ", "").replace("so far", "").strip()
+                        
+                        if len(topic_part) > 3:
+                            self.conversation_focus_topic = topic_part[:100]  # Limit length
+                            self.conversation_focus_timestamp = time.time()
+                            self.logger.info(f"🎯 Set conversation focus: {self.conversation_focus_topic}")
+                            break
+                            
         except Exception as e:
-            logger.error(f"Error processing user message: {e}")
+            self.logger.error(f"Error setting conversation focus: {e}")
     
     def get_user_focused_goals(self) -> List[LearningGoal]:
         """Get goals that were set by user focus"""
@@ -2001,6 +2221,56 @@ Be creative and reveal hidden connections. Keep under 150 words."""
         current_gaps.extend(filtered_gaps[:2])
         
         return current_gaps[:3] if current_gaps else ["general knowledge", "problem solving", "creative thinking"]
+    
+    def set_domain_priority(self, domain_category: str, priority: float):
+        """Set priority weight for a domain category (0.0 to 2.0, where 1.0 is normal)"""
+        if domain_category in self.domain_priorities:
+            self.domain_priorities[domain_category] = max(0.0, min(2.0, priority))
+            self.logger.info(f"Set {domain_category} priority to {priority}")
+        else:
+            self.logger.warning(f"Unknown domain category: {domain_category}")
+    
+    def get_domain_priorities(self) -> Dict[str, float]:
+        """Get current domain priority settings"""
+        return self.domain_priorities.copy()
+    
+    def reset_domain_priorities(self):
+        """Reset all domain priorities to default (1.0)"""
+        for category in self.domain_priorities:
+            self.domain_priorities[category] = 1.0
+        self.logger.info("Reset all domain priorities to default")
+    
+    def prioritize_science_domains(self):
+        """Prioritize scientific and medical domains for focused learning"""
+        science_priorities = {
+            'basic_sciences': 1.5,
+            'life_sciences': 1.5,
+            'medical_sciences': 1.5,
+            'specialized_medical': 1.5,
+            'diagnostic_imaging': 1.5,
+            'biological_subfields': 1.5,
+            'social_sciences': 0.7,
+            'arts_humanities': 0.5,
+            'engineering_tech': 0.8
+        }
+        self.domain_priorities.update(science_priorities)
+        self.logger.info("Prioritized scientific and medical domains")
+    
+    def prioritize_humanities_domains(self):
+        """Prioritize humanities and social sciences for balanced learning"""
+        humanities_priorities = {
+            'basic_sciences': 0.8,
+            'life_sciences': 0.9,
+            'medical_sciences': 0.9,
+            'specialized_medical': 0.7,
+            'diagnostic_imaging': 0.7,
+            'biological_subfields': 0.8,
+            'social_sciences': 1.5,
+            'arts_humanities': 1.5,
+            'engineering_tech': 0.9
+        }
+        self.domain_priorities.update(humanities_priorities)
+        self.logger.info("Prioritized humanities and social sciences")
     
     def _generate_research_questions(self, topic: str) -> List[str]:
         """Generate research questions for a topic using RTX 4090 Beast Mode"""

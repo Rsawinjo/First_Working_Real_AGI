@@ -27,7 +27,7 @@ class LLMInterface:
         self.logger = logging.getLogger(__name__)
         self.config = self._load_config(config_path)
         # Llama 3 AGI Integration - Default to Llama 3 8B
-        self.model_name = model_name or self.config.get('DEFAULT_MODEL', 'meta-llama/Meta-Llama-3-8B-Instruct')
+        self.model_name = model_name or self.config.get('DEFAULT_MODEL', 'meta-llama/Llama-3.2-3B-Instruct')
 
         # Response configuration
         self.max_response_length = max_response_length
@@ -79,6 +79,9 @@ class LLMInterface:
         self.research_depth = "comprehensive"
         self.parallel_processing = True
 
+        # Set up Hugging Face authentication for gated models
+        self._setup_huggingface_auth()
+
         self.load_model()
         self._start_improvement_loop()
     
@@ -117,11 +120,25 @@ class LLMInterface:
         except:
             # Default config if file doesn't exist
             return {
-                'DEFAULT_MODEL': 'microsoft/DialoGPT-medium',
+                'DEFAULT_MODEL': 'meta-llama/Llama-3.2-3B-Instruct',
                 'MODEL_CACHE_DIR': './data/models',
                 'LEARNING_RATE': 0.001,
                 'IMPROVEMENT_INTERVAL': 100
             }
+    
+    def _setup_huggingface_auth(self):
+        """Set up Hugging Face authentication for gated models"""
+        try:
+            from huggingface_hub import HfFolder
+            token = HfFolder.get_token()
+            if token:
+                os.environ['HF_TOKEN'] = token
+                os.environ['HUGGINGFACE_TOKEN'] = token
+                self.logger.info("Hugging Face authentication configured")
+            else:
+                self.logger.warning("No Hugging Face token found - gated models may not load")
+        except Exception as e:
+            self.logger.warning(f"Failed to set up Hugging Face auth: {e}")
     
     def load_model(self, model_name: str = None):
         """Load the specified language model"""
@@ -225,12 +242,25 @@ class LLMInterface:
             
         except Exception as e:
             self.logger.error(f"Error loading model: {e}")
-            # Try fallback model
-            fallback = self.config.get('FALLBACK_MODEL', 'microsoft/DialoGPT-small')
-            if self.model_name != fallback:
-                self.logger.info(f"Trying fallback model: {fallback}")
-                self.model_name = fallback
-                return self.load_model()
+            # Try Llama fallback models only - no non-Llama models allowed
+            llama_fallbacks = [
+                "meta-llama/Llama-3.2-3B-Instruct",
+                "meta-llama/Llama-3.2-1B-Instruct",
+                "meta-llama/Llama-3.2-3B",
+                "meta-llama/Llama-3.2-1B"
+            ]
+            
+            for fallback in llama_fallbacks:
+                if self.model_name != fallback:
+                    self.logger.info(f"Trying Llama fallback model: {fallback}")
+                    self.model_name = fallback
+                    try:
+                        return self.load_model()
+                    except Exception as fallback_error:
+                        self.logger.warning(f"Llama fallback {fallback} also failed: {fallback_error}")
+                        continue
+            
+            self.logger.error("All Llama models failed to load - AGI system cannot function without Llama")
             return False
     
     def generate_response(self, user_input: str, context: Optional[Dict] = None) -> Tuple[str, Dict]:

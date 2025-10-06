@@ -1,8 +1,8 @@
 # Configuration for the AI Self-Improvement System
 
 # Model Settings
-DEFAULT_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
-FALLBACK_MODEL = "microsoft/DialoGPT-small"
+DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
+FALLBACK_MODEL = "meta-llama/Llama-3.2-1B-Instruct"
 MODEL_CACHE_DIR = "./data/models"
 
 # Learning Parameters
@@ -12,7 +12,7 @@ KNOWLEDGE_THRESHOLD = 0.75
 IMPROVEMENT_INTERVAL = 100  # conversations
 
 # Topic Filtering
-TOPIC_SIMILARITY_THRESHOLD = 40  # rapidfuzz token_sort_ratio threshold for topic similarity
+TOPIC_SIMILARITY_THRESHOLD = 85  # Higher threshold to prevent false positives with mastered topics
 
 # Vector Database Settings
 VECTOR_DB_PATH = "./data/knowledge_base"
