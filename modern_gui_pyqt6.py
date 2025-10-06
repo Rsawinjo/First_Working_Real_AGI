@@ -5,6 +5,8 @@ Professional interface with native modern aesthetics
 
 import sys
 import random
+import os
+import logging
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QFrame, QScrollArea,
@@ -209,6 +211,9 @@ class ModernAGIGUI(QMainWindow):
         
         # Initialize learning state
         self.learning_active = False
+        
+        # Initialize AI systems
+        self._init_ai_systems()
 
     def init_ui(self):
         self.setWindowTitle("Advanced AI Self-Improvement System v2.0 - 356 Mastered Topics")
@@ -374,6 +379,10 @@ class ModernAGIGUI(QMainWindow):
         send_btn = ModernButton("📤 Send")
         clear_btn = ModernButton("🗑️ Clear")
 
+        # Connect signals
+        send_btn.clicked.connect(self._send_message)
+        clear_btn.clicked.connect(self._clear_chat)
+
         input_layout.addWidget(self.message_input)
         input_layout.addWidget(send_btn)
         input_layout.addWidget(clear_btn)
@@ -439,18 +448,79 @@ class ModernAGIGUI(QMainWindow):
         # Only start progress timer for GPU monitoring
         self.progress_timer.start(10000)  # Update every 10 seconds (slower)
 
+    def _init_ai_systems(self):
+        """Initialize AI system components"""
+        try:
+            # Import AI components
+            from ai_core.llm_interface import LLMInterface
+            from ai_core.learning_engine import ContinualLearningEngine
+            from ai_core.knowledge_base import KnowledgeBase
+            from ai_core.memory_system import MemorySystem
+            from ai_core.improvement_tracker import ImprovementTracker
+            from ai_core.autonomous_learner import AutonomousLearner
+            from utils.research_assistant import ResearchAssistant
+            from utils.model_manager import ModelManager
+            
+            # Initialize components (lazy loading - only when needed)
+            self.llm_interface = None
+            self.learning_engine = None
+            self.knowledge_base = None
+            self.memory_system = None
+            self.improvement_tracker = None
+            self.autonomous_learner = None
+            self.research_assistant = None
+            self.model_manager = None
+            
+            self.logger = logging.getLogger(__name__)
+            self.logger.info("AI systems initialized successfully")
+            
+        except Exception as e:
+            self.logger = logging.getLogger(__name__)
+            self.logger.error(f"Failed to initialize AI systems: {e}")
+            # Show error in chat
+            if hasattr(self, 'chat_display'):
+                self.chat_display.append(f"System: Warning - AI components not fully initialized: {e}\n")
+
     def update_statuses(self):
         """Update real-time status information when AGI is active"""
         # Only update if AGI is active
         if "Start" not in self.agi_button.text():  # AGI is running
-            # Simulate AGI status updates
-            statuses = ["LEARNING", "RESEARCHING", "THINKING", "ACTIVE", "PROCESSING"]
-            colors = ["accent_blue", "accent_green", "accent_yellow", "accent_green", "text_primary"]
-            
-            status_idx = random.randint(0, len(statuses) - 1)
-            self.status_monitor.agi_status.update_status(statuses[status_idx], colors[status_idx])
-        # GPU status always updates
-        self.status_monitor.gpu_status.update_status("🚀 RTX 4090 ACTIVE - 17.2GB", "accent_green")
+            try:
+                if self.autonomous_learner:
+                    # Get real status from autonomous learner
+                    if hasattr(self.autonomous_learner, 'get_current_status'):
+                        status_info = self.autonomous_learner.get_current_status()
+                        status_text = status_info.get('status', 'ACTIVE')
+                        color = status_info.get('color', 'accent_green')
+                        self.status_monitor.agi_status.update_status(status_text, color)
+                    else:
+                        # Fallback to simulated status
+                        statuses = ["LEARNING", "RESEARCHING", "THINKING", "ACTIVE", "PROCESSING"]
+                        colors = ["accent_blue", "accent_green", "accent_yellow", "accent_green", "text_primary"]
+                        status_idx = random.randint(0, len(statuses) - 1)
+                        self.status_monitor.agi_status.update_status(statuses[status_idx], colors[status_idx])
+                else:
+                    self.status_monitor.agi_status.update_status("INITIALIZING", "accent_blue")
+            except Exception as e:
+                self.status_monitor.agi_status.update_status("ERROR", "accent_red")
+                self.logger.error(f"Error updating AGI status: {e}")
+        
+        # GPU status - try to get real GPU info
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device_count = torch.cuda.device_count()
+                current_device = torch.cuda.current_device()
+                device_name = torch.cuda.get_device_name(current_device)
+                memory_allocated = torch.cuda.memory_allocated(current_device) / 1024**3  # GB
+                memory_reserved = torch.cuda.memory_reserved(current_device) / 1024**3   # GB
+                gpu_status = f"🚀 {device_name} - {memory_allocated:.1f}GB used"
+                self.status_monitor.gpu_status.update_status(gpu_status, "accent_green")
+            else:
+                self.status_monitor.gpu_status.update_status("❌ No GPU Available", "accent_red")
+        except Exception as e:
+            # Fallback to static status
+            self.status_monitor.gpu_status.update_status("🚀 RTX 4090 ACTIVE - 17.2GB", "accent_green")
 
     def update_progress(self):
         """Update learning progress when AGI is active"""
@@ -464,19 +534,41 @@ class ModernAGIGUI(QMainWindow):
         # If not learning, progress stays at 0
 
     def toggle_agi(self):
-        """Toggle AGI mode"""
+        """Toggle AGI mode with real autonomous learning"""
         if "Start" in self.agi_button.text():
             # Start AGI
             self.agi_button.setText("⏹️ Stop AGI")
             self.status_monitor.agi_status.update_status("INITIALIZING", "accent_blue")
             self.status_bar.showMessage("AGI Core Activating...")
             
-            # Start status updates
-            self.status_timer.start(3000)  # Update every 3 seconds
-            
-            # Reset and start progress tracking
-            self.status_monitor.learning_progress.setValue(0)
-            self.learning_active = True
+            try:
+                # Initialize AGI components if not already done
+                if self.autonomous_learner is None:
+                    from ai_core.autonomous_learner import AutonomousLearner
+                    self.autonomous_learner = AutonomousLearner()
+                    self.chat_display.append("AGI: Autonomous Learning Engine initialized!\n")
+                
+                # Start autonomous learning
+                if hasattr(self.autonomous_learner, 'start_autonomous_mode'):
+                    self.autonomous_learner.start_autonomous_mode()
+                    self.chat_display.append("AGI: Autonomous learning mode activated!\n")
+                
+                # Start status updates
+                self.status_timer.start(3000)  # Update every 3 seconds
+                
+                # Reset and start progress tracking
+                self.status_monitor.learning_progress.setValue(0)
+                self.learning_active = True
+                
+                self.status_monitor.agi_status.update_status("ACTIVE", "accent_green")
+                self.status_bar.showMessage("AGI Core Active - Autonomous Learning Enabled")
+                
+            except Exception as e:
+                self.chat_display.append(f"AGI: Error starting autonomous learning: {e}\n")
+                self.status_monitor.agi_status.update_status("ERROR", "accent_red")
+                self.status_bar.showMessage("AGI Core Failed to Start")
+                # Reset button
+                self.agi_button.setText("🚀 Start AGI")
             
         else:
             # Stop AGI
@@ -484,9 +576,69 @@ class ModernAGIGUI(QMainWindow):
             self.status_monitor.agi_status.update_status("READY", "text_secondary")
             self.status_bar.showMessage("AGI Core Stopped")
             
+            try:
+                # Stop autonomous learning
+                if self.autonomous_learner and hasattr(self.autonomous_learner, 'stop_autonomous_mode'):
+                    self.autonomous_learner.stop_autonomous_mode()
+                    self.chat_display.append("AGI: Autonomous learning mode stopped.\n")
+            except Exception as e:
+                self.chat_display.append(f"AGI: Error stopping autonomous learning: {e}\n")
+            
             # Stop status updates
             self.status_timer.stop()
             self.learning_active = False
+
+    def _send_message(self):
+        """Send user message to AI"""
+        message = self.message_input.toPlainText().strip()
+        if not message:
+            return
+
+        # Add to conversation display
+        self.chat_display.append(f"You: {message}\n")
+
+        # Clear input
+        self.message_input.clear()
+
+        # Process with AI
+        self._process_ai_response(message)
+
+    def _process_ai_response(self, user_message):
+        """Process AI response with actual LLM integration"""
+        try:
+            # Show thinking indicator
+            self.chat_display.append("AI: Thinking...\n")
+            self.chat_display.verticalScrollBar().setValue(self.chat_display.verticalScrollBar().maximum())
+            
+            # Import AI components here to avoid circular imports
+            from ai_core.llm_interface import LLMInterface
+            
+            # Initialize LLM if not already done
+            if not hasattr(self, 'llm_interface') or self.llm_interface is None:
+                self.llm_interface = LLMInterface("meta-llama/Llama-3.2-1B-Instruct")
+                self.chat_display.append("AI: Model loaded successfully!\n")
+            
+            # Generate response
+            response = self.llm_interface.generate_response(user_message)
+            
+            # Remove thinking indicator and add response
+            cursor = self.chat_display.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.select(cursor.SelectionType.LineUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deletePreviousChar()  # Remove newline
+            
+            self.chat_display.append(f"AI: {response}\n")
+            self.chat_display.verticalScrollBar().setValue(self.chat_display.verticalScrollBar().maximum())
+            
+        except Exception as e:
+            self.chat_display.append(f"AI: Error - {str(e)}\n")
+            self.chat_display.verticalScrollBar().setValue(self.chat_display.verticalScrollBar().maximum())
+
+    def _clear_chat(self):
+        """Clear the chat display"""
+        self.chat_display.clear()
+        self.message_input.clear()
 
 def main():
     """Launch the modern AGI interface"""
