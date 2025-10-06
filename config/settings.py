@@ -42,3 +42,7 @@ LOG_FILE = "./data/ai_system.log"
 AUTO_IMPROVE = True
 IMPROVEMENT_THRESHOLD = 0.8
 CURIOSITY_FACTOR = 0.3
+
+# API Keys for Tool Integration
+WOLFRAM_ALPHA_APP_ID = ""  # Add your Wolfram Alpha API key here
+# Add other API keys as needed

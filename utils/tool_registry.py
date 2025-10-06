@@ -11,6 +11,12 @@ import json
 from typing import Dict, List, Optional
 from abc import ABC, abstractmethod
 
+# Load settings
+try:
+    from ..config.settings import WOLFRAM_ALPHA_APP_ID
+except ImportError:
+    WOLFRAM_ALPHA_APP_ID = ""
+
 
 class Tool(ABC):
     """Abstract base class for tools."""
@@ -112,8 +118,10 @@ class ToolRegistry:
     def _register_default_tools(self):
         """Register built-in tools."""
         self.register_tool(CalculatorTool())
-        # Note: For Wolfram Alpha, add API key in settings
-        # self.register_tool(WolframAlphaTool(api_key="YOUR_KEY"))
+        # Register Wolfram Alpha if API key is available
+        if WOLFRAM_ALPHA_APP_ID:
+            self.register_tool(WolframAlphaTool(WOLFRAM_ALPHA_APP_ID))
+        # Note: Add other tools with API keys here
 
     def register_tool(self, tool: Tool):
         self.tools[tool.name] = tool
