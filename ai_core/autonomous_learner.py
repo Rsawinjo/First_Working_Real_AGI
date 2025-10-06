@@ -32,6 +32,13 @@ try:
 except ImportError:
     WEB_RESEARCH_AVAILABLE = False
 
+# Import tool registry
+try:
+    from ..utils.tool_registry import tool_registry
+    TOOL_REGISTRY_AVAILABLE = True
+except ImportError:
+    TOOL_REGISTRY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 if not WEB_RESEARCH_AVAILABLE:
@@ -1543,6 +1550,12 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
             # 1. RESEARCH PHASE
             research_results = self._deep_research(goal.topic)
             
+            # 1.5. TOOL INTEGRATION PHASE
+            if TOOL_REGISTRY_AVAILABLE:
+                tool_results = self._integrate_tools_for_goal(goal.topic, research_results)
+                if tool_results:
+                    research_results['sources'].extend(tool_results)
+            
             # 2. ANALYSIS PHASE
             self.state = LearningState.SYNTHESIZING
             insights = self._analyze_research_results(research_results, goal.topic)
@@ -1591,6 +1604,41 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
             if self.active_goal:
                 self.active_goal.status = "failed"
                 self.active_goal = None
+    
+    def _integrate_tools_for_goal(self, topic: str, research_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Integrate autonomous tool usage for enhanced problem-solving"""
+        tool_results = []
+        
+        if not TOOL_REGISTRY_AVAILABLE:
+            return tool_results
+        
+        try:
+            # Use LLM to determine if tools are needed for this topic
+            tool_name = tool_registry.select_tool(topic, self.llm_interface)
+            
+            if tool_name:
+                logger.info(f"Selected tool '{tool_name}' for topic: {topic}")
+                
+                # Execute the tool with the topic as query
+                tool_output = tool_registry.execute_tool(tool_name, topic)
+                
+                if tool_output and "Error:" not in tool_output:
+                    tool_results.append({
+                        'type': 'tool_execution',
+                        'tool': tool_name,
+                        'content': tool_output,
+                        'confidence': 0.9,
+                        'method': 'autonomous_tool_integration'
+                    })
+                    
+                    self._report_to_gui(f"🔧 Used {tool_name} tool for: {topic}", "info")
+                else:
+                    logger.warning(f"Tool {tool_name} failed or returned error: {tool_output}")
+        
+        except Exception as e:
+            logger.error(f"Error integrating tools: {e}")
+        
+        return tool_results
     
     def _deep_research(self, topic: str) -> Dict[str, Any]:
         """Conduct deep internal knowledge consolidation for holistic understanding"""
