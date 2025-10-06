@@ -20,43 +20,6 @@ class AISystemGUI:
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.configure(bg='#1e1e1e')
         # ...existing code...
-
-    def _learning_settings(self):
-        """Open a settings window for live adjustment of tunable parameters"""
-        import tkinter as tk
-        from config import settings
-        settings_win = tk.Toplevel(self.root)
-        settings_win.title("Learning Settings")
-        settings_win.geometry("350x220")
-
-        # Topic Similarity Threshold
-        tk.Label(settings_win, text="Topic Similarity Threshold (rapidfuzz)").pack(pady=(10,0))
-        similarity_var = tk.IntVar(value=getattr(settings, 'TOPIC_SIMILARITY_THRESHOLD', 80))
-        similarity_scale = tk.Scale(settings_win, from_=50, to=100, orient=tk.HORIZONTAL, variable=similarity_var)
-        similarity_scale.pack(fill=tk.X, padx=20)
-
-        # Learning Rate
-        tk.Label(settings_win, text="Learning Rate").pack(pady=(10,0))
-        lr_var = tk.DoubleVar(value=getattr(settings, 'LEARNING_RATE', 0.001))
-        lr_scale = tk.Scale(settings_win, from_=0.0001, to=0.01, resolution=0.0001, orient=tk.HORIZONTAL, variable=lr_var)
-        lr_scale.pack(fill=tk.X, padx=20)
-
-        def save_settings():
-            # Update settings.py values
-            with open('config/settings.py', 'r') as f:
-                lines = f.readlines()
-            with open('config/settings.py', 'w') as f:
-                for line in lines:
-                    if line.startswith('TOPIC_SIMILARITY_THRESHOLD'):
-                        f.write(f'TOPIC_SIMILARITY_THRESHOLD = {similarity_var.get()}\n')
-                    elif line.startswith('LEARNING_RATE'):
-                        f.write(f'LEARNING_RATE = {lr_var.get()}\n')
-                    else:
-                        f.write(line)
-            messagebox.showinfo("Settings Updated", "Parameters updated! Please restart AGI to apply.")
-            settings_win.destroy()
-
-        tk.Button(settings_win, text="Save Settings", command=save_settings).pack(pady=15)
 """
 Main Application - Advanced AI Self-Improvement System
 Features a modern tkinter GUI with comprehensive AI capabilities
@@ -75,6 +38,8 @@ import queue
 from collections import deque
 from typing import Dict, List, Optional
 import webbrowser
+import signal
+import atexit
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -137,6 +102,71 @@ class AISystemGUI:
         # Welcome message
         self._add_system_message("🧠 Advanced AI Self-Improvement System Initialized")
         self._add_system_message("Ready to learn, improve, and evolve with every interaction!")
+    
+    def _learning_settings(self):
+        """Open a settings window for live adjustment of tunable parameters"""
+        import tkinter as tk
+        from config import settings
+        settings_win = tk.Toplevel(self.root)
+        settings_win.title("Learning Settings")
+        settings_win.geometry("400x320")  # Increased height for new control
+        
+        # Ensure window appears on top and is focused
+        settings_win.transient(self.root)
+        settings_win.grab_set()
+        settings_win.focus_set()
+        settings_win.lift()
+
+        # Learning Mode Selector
+        tk.Label(settings_win, text="🧠 Learning Mode", font=('Arial', 10, 'bold')).pack(pady=(10,0))
+        mode_frame = tk.Frame(settings_win)
+        mode_frame.pack(fill=tk.X, padx=20, pady=(0,10))
+        
+        self.learning_mode_var = tk.StringVar(value=self.autonomous_learner.learning_mode if self.autonomous_learner else 'holistic')
+        
+        tk.Radiobutton(mode_frame, text="🌟 Holistic (AGI's Best Self)", variable=self.learning_mode_var, 
+                      value='holistic', command=self._on_learning_mode_change).pack(anchor=tk.W)
+        tk.Radiobutton(mode_frame, text="🎯 Focused (User-Directed)", variable=self.learning_mode_var, 
+                      value='focused', command=self._on_learning_mode_change).pack(anchor=tk.W)
+
+        # Topic Similarity Threshold
+        tk.Label(settings_win, text="Topic Similarity Threshold (rapidfuzz)").pack(pady=(10,0))
+        similarity_var = tk.IntVar(value=getattr(settings, 'TOPIC_SIMILARITY_THRESHOLD', 80))
+        similarity_scale = tk.Scale(settings_win, from_=50, to=100, orient=tk.HORIZONTAL, variable=similarity_var)
+        similarity_scale.pack(fill=tk.X, padx=20)
+
+        # Learning Rate
+        tk.Label(settings_win, text="Learning Rate").pack(pady=(10,0))
+        lr_var = tk.DoubleVar(value=getattr(settings, 'LEARNING_RATE', 0.001))
+        lr_scale = tk.Scale(settings_win, from_=0.0001, to=0.01, resolution=0.0001, orient=tk.HORIZONTAL, variable=lr_var)
+        lr_scale.pack(fill=tk.X, padx=20)
+
+        def save_settings():
+            # Update settings.py values
+            with open('config/settings.py', 'r') as f:
+                lines = f.readlines()
+            with open('config/settings.py', 'w') as f:
+                for line in lines:
+                    if line.startswith('TOPIC_SIMILARITY_THRESHOLD'):
+                        f.write(f'TOPIC_SIMILARITY_THRESHOLD = {similarity_var.get()}\n')
+                    elif line.startswith('LEARNING_RATE'):
+                        f.write(f'LEARNING_RATE = {lr_var.get()}\n')
+                    else:
+                        f.write(line)
+            messagebox.showinfo("Settings Updated", "Parameters updated! Please restart AGI to apply.")
+            settings_win.destroy()
+
+        tk.Button(settings_win, text="Save Settings", command=save_settings).pack(pady=15)
+        
+        # Wait for the window to be closed (modal dialog)
+        settings_win.wait_window(settings_win)
+    
+    def _on_learning_mode_change(self):
+        """Handle learning mode change from settings window"""
+        if self.autonomous_learner:
+            new_mode = self.learning_mode_var.get()
+            self.autonomous_learner.set_learning_mode(new_mode)
+            self._add_learning_log(f"🧠 Learning mode changed to: {new_mode}", "settings")
     
     def _setup_logging(self):
         """Setup logging configuration"""
@@ -1104,17 +1134,6 @@ class AISystemGUI:
         """Handle model selection change"""
         self._change_model()
     
-    def _learning_settings(self):
-        """Open learning settings dialog"""
-        settings_window = tk.Toplevel(self.root)
-        settings_window.title("Learning Settings")
-        settings_window.geometry("400x300")
-        settings_window.configure(bg='#2d2d2d')
-        
-        # Add settings controls here
-        ttk.Label(settings_window, text="Learning Configuration").pack(pady=10)
-        ttk.Label(settings_window, text="(Settings panel - to be implemented)").pack()
-    
     def _show_performance_report(self):
         """Show performance report"""
         if self.improvement_tracker:
@@ -2074,17 +2093,101 @@ Respond as a self-aware AGI who can intelligently discuss its own learning and d
         except:
             return "Ready to learn new topics"
     
+    def _cleanup_resources(self):
+        """Cleanup all resources before shutdown"""
+        try:
+            self.logger.info("Cleaning up resources...")
+            
+            # Cleanup LLM interface (GPU resources)
+            if self.llm_interface:
+                self.llm_interface.cleanup()
+                self.llm_interface = None
+            
+            # Stop autonomous learner
+            if self.autonomous_learner:
+                # Stop any running threads
+                if hasattr(self.autonomous_learner, 'autonomous_mode') and self.autonomous_learner.autonomous_mode:
+                    self.autonomous_learner.stop_autonomous_mode()
+            
+            # Close database connections
+            if self.knowledge_base:
+                # Knowledge base cleanup if needed
+                pass
+            
+            if self.memory_system:
+                # Memory system cleanup if needed
+                pass
+            
+            # Stop message processing thread
+            if self.ai_thread and self.ai_thread.is_alive():
+                self.ai_thread.join(timeout=2.0)
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Small delay to ensure cleanup completes
+            import time
+            time.sleep(0.5)
+            
+            self.logger.info("Resource cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during resource cleanup: {e}")
+    
     def run(self):
         """Start the application"""
         try:
             self.logger.info("Starting AI Self-Improvement System GUI")
+            print("DEBUG: About to call mainloop()")
+            print(f"DEBUG: Root window exists: {self.root is not None}")
+            print(f"DEBUG: Root window title: {self.root.title()}")
+            
+            # Ensure window is visible
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+            print("DEBUG: Window should now be visible")
+            
             self.root.mainloop()
+            print("DEBUG: Mainloop exited")
+            
+            # Cleanup resources
+            self._cleanup_resources()
+            
         except Exception as e:
             self.logger.error(f"Error running application: {e}")
+            print(f"DEBUG: Exception in run(): {e}")
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Fatal Error", f"Application error: {e}")
+            # Still cleanup on error
+            self._cleanup_resources()
 
 def main():
     """Main entry point"""
+    global app  # Make app global so signal handler can access it
+    app = None
+    
+    def cleanup_handler():
+        """Cleanup handler for atexit"""
+        if app:
+            app._cleanup_resources()
+    
+    # Register cleanup handler
+    atexit.register(cleanup_handler)
+    
+    def signal_handler(signum, frame):
+        """Handle termination signals gracefully"""
+        print(f"\nReceived signal {signum}, cleaning up...")
+        if app:
+            app._cleanup_resources()
+        sys.exit(0)
+    
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
         # Create and run application
         app = AISystemGUI()
@@ -2092,6 +2195,10 @@ def main():
     except Exception as e:
         print(f"Failed to start application: {e}")
         logging.error(f"Failed to start application: {e}")
+    finally:
+        # Ensure cleanup happens even if something goes wrong
+        if app:
+            app._cleanup_resources()
 
 if __name__ == "__main__":
     main()

@@ -1,18 +1,18 @@
 # Configuration for the AI Self-Improvement System
 
 # Model Settings
-DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
+DEFAULT_MODEL = "meta-llama/Llama-3.2-1B-Instruct"  # Temporarily using smaller model for faster loading
 FALLBACK_MODEL = "meta-llama/Llama-3.2-1B-Instruct"
 MODEL_CACHE_DIR = "./data/models"
 
 # Learning Parameters
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0068
 MEMORY_RETENTION_DAYS = 30
 KNOWLEDGE_THRESHOLD = 0.75
 IMPROVEMENT_INTERVAL = 100  # conversations
 
 # Topic Filtering
-TOPIC_SIMILARITY_THRESHOLD = 85  # Higher threshold to prevent false positives with mastered topics
+TOPIC_SIMILARITY_THRESHOLD = 75
 
 # Vector Database Settings
 VECTOR_DB_PATH = "./data/knowledge_base"

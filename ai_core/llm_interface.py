@@ -597,6 +597,34 @@ class LLMInterface:
             'feedback_count': len(self.feedback_buffer)
         }
     
+    def cleanup(self):
+        """Properly cleanup GPU resources and memory"""
+        try:
+            import torch
+            
+            # Clear model from memory
+            if hasattr(self, 'model') and self.model is not None:
+                del self.model
+                self.model = None
+            
+            if hasattr(self, 'tokenizer') and self.tokenizer is not None:
+                del self.tokenizer
+                self.tokenizer = None
+            
+            if hasattr(self, 'pipeline') and self.pipeline is not None:
+                del self.pipeline
+                self.pipeline = None
+            
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Wait for all operations to complete
+            
+            self.logger.info("GPU resources cleaned up successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
+    
     def save_state(self, filepath: str):
         """Save the current state for persistence"""
         state = {

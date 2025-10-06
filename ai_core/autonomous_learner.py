@@ -88,6 +88,15 @@ class AutonomousLearner:
         else:
             self._report_to_gui(f"❓ Unknown feedback type: {feedback_type}", "feedback")
 
+    def set_learning_mode(self, mode: str):
+        """Set the learning mode: 'holistic' (default AGI mode) or 'focused' (user-directed)"""
+        if mode in ['holistic', 'focused']:
+            self.learning_mode = mode
+            self._report_to_gui(f"🧠 Learning mode set to: {mode}", "info")
+            self.logger.info(f"Learning mode changed to: {mode}")
+        else:
+            self._report_to_gui(f"❌ Invalid learning mode: {mode}. Use 'holistic' or 'focused'", "error")
+
     def expand_hierarchical_goals(self, base_topic: str):
         """Expand learning goals by generating related/subtopics using knowledge graph and semantic similarity."""
         if not self.knowledge_base:
@@ -349,6 +358,9 @@ class AutonomousLearner:
         self.creativity_threshold = 0.7
         self.exploration_rate = 0.3
         
+        # Learning Mode: 'holistic' (default AGI mode) or 'focused' (user-directed)
+        self.learning_mode = 'holistic'  # Default to holistic understanding
+        
         # Phase 2: Enhanced research settings
         self.research_depth = "comprehensive"  # shallow, standard, comprehensive
         self.web_research_enabled = True
@@ -367,12 +379,17 @@ class AutonomousLearner:
             'biological_subfields': 1.0
         }
         
-        # Goal Generation Cache (simple in-memory cache to avoid repeated LLM calls)
+        # Goal generation cache for performance
         self.goal_generation_cache = {}
         
-        # Research Results Storage
-        self.last_research_results = {}   # Store latest research results
-        self.last_insights = []           # Store latest insights
+        # Dynamic Topic Discovery
+        self.conversation_topics = set()  # Topics from user conversations
+        self.mastered_topics = set()      # Topics already learned - will be loaded from database
+        self.trending_topics = []         # Current trending topics
+        self.topic_depth_map = {}         # Track learning depth per topic
+        self.user_focus_topic: Optional[str] = None      # User-defined focus topic for learning prioritization
+        self.conversation_focus_topic: Optional[str] = None  # Auto-detected conversation topic for learning prioritization
+        self.conversation_focus_timestamp: Optional[float] = None  # When conversation focus was set
         
         # Enhanced Performance Metrics
         self.session_start_time = time.time()
@@ -1429,203 +1446,88 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
         return similarity_score >= threshold
     
     def _force_discovery_goal(self) -> LearningGoal:
-        """🚀 MASTER SOLUTION: Force create completely unique discovery goals using dynamic generation"""
+        """🚀 HOLISTIC CONSOLIDATION: Generate goals focused on consolidating pretrained knowledge and gaining universal insights"""
         
         import random
         import hashlib
         
-        # Generate truly unique topic using timestamp + randomness
+        # Generate unique identifier
         timestamp_seed = str(int(time.time()))
         random_seed = str(random.randint(10000, 99999))
         unique_hash = hashlib.md5((timestamp_seed + random_seed).encode()).hexdigest()[:8]
         
-        # 🚀 DYNAMIC TOPIC GENERATION: Create completely novel topics instead of using prebaked lists
-        # Generate topics that are guaranteed to be new and not in any predefined pool
-        
-        # Core domains for combination (exclude AI/computing entirely)
-        core_domains = [
-            "biology", "chemistry", "physics", "mathematics", "astronomy", "geology", "oceanography", "meteorology", "ecology", "genetics", "neuroscience", "psychology",
-            "sociology", "anthropology", "archaeology", "history", "philosophy", "linguistics", "economics", "political science", "geography", "music", "art", "literature",
-            "theater", "dance", "architecture", "engineering", "medicine", "pharmacology", "microbiology", "virology", "immunology", "cardiology", "oncology", "radiology",
-            "surgery", "anatomy", "physiology", "pathology", "toxicology", "endocrinology", "rheumatology", "dermatology", "ophthalmology", "otolaryngology", "urology",
-            "gynecology", "pediatrics", "geriatrics", "sports medicine", "forensic science", "criminology", "materials science",
-            "nanotechnology", "biotechnology", "environmental science", "climatology", "hydrology", "seismology", "volcanology", "paleontology", "entomology",
-            "ornithology", "herpetology", "ichthyology", "mammalogy", "botany", "mycology", "phycology", "bacteriology", "parasitology", "zoology", "ethology",
-            "behavioral science", "cognitive science", "developmental psychology", "social psychology", "clinical psychology", "counseling psychology",
-            "educational psychology", "industrial psychology", "forensic psychology", "sports psychology", "environmental psychology", "evolutionary biology",
-            "molecular biology", "cell biology", "developmental biology", "ecological genetics", "population genetics", "quantitative genetics", "biochemical genetics",
-            "genomics", "proteomics", "metabolomics", "transcriptomics", "pharmacogenomics", "toxicogenomics", "nutrigenomics", "epigenetics", "chromosome biology",
-            "nuclear biology", "organelle biology", "membrane biology", "cytoskeleton biology", "extracellular matrix biology", "signal transduction", "cell cycle regulation",
-            "apoptosis", "autophagy", "necrosis", "inflammation", "immunity", "autoimmunity", "allergy", "hypersensitivity", "transplantation immunology", "tumor immunology",
-            "vaccinology", "serology", "hematology", "coagulation", "thrombosis", "hemophilia", "anemia", "leukemia", "lymphoma", "myeloma", "myelodysplastic syndromes",
-            "bone marrow transplantation", "stem cell biology", "regenerative medicine", "tissue engineering", "biomaterials", "biomedical engineering", "medical devices",
-            "prosthetics", "orthotics", "rehabilitation engineering", "assistive technology", "telemedicine", "e-health", "m-health", "health informatics", "medical imaging",
-            "diagnostic imaging", "therapeutic imaging", "interventional radiology", "nuclear medicine", "molecular imaging", "optical imaging", "ultrasound imaging",
-            "magnetic resonance imaging", "computed tomography", "positron emission tomography", "single photon emission computed tomography", "bioluminescence imaging",
-            "fluorescence imaging", "photoacoustic imaging", "elastography", "thermography", "electrical impedance tomography", "diffuse optical tomography", "near-infrared spectroscopy",
-            "functional near-infrared spectroscopy", "electroencephalography", "magnetoencephalography", "transcranial magnetic stimulation", "transcranial direct current stimulation",
-            "deep brain stimulation", "vagus nerve stimulation", "spinal cord stimulation", "peripheral nerve stimulation", "biofeedback", "neurofeedback", "heart rate variability",
-            "galvanic skin response", "electromyography", "electroneurography", "nerve conduction studies", "evoked potentials", "polysomnography", "sleep medicine", "chronobiology",
-            "amyotrophic lateral sclerosis", "Huntington's disease", "Parkinson's disease", "Alzheimer's disease", "frontotemporal dementia", "vascular dementia", "Lewy body dementia",
-            "corticobasal degeneration", "progressive supranuclear palsy", "multiple system atrophy", "spinocerebellar ataxias", "Friedreich's ataxia", "Machado-Joseph disease",
-            "Wilson's disease", "Menkes disease", "prion diseases", "Creutzfeldt-Jakob disease", "variant Creutzfeldt-Jakob disease", "Gerstmann-Sträussler-Scheinker syndrome",
-            "fatal familial insomnia", "kuru", "scrapie", "bovine spongiform encephalopathy", "chronic wasting disease", "transmissible mink encephalopathy",
-            "feline spongiform encephalopathy", "exotic ungulate encephalopathy", "transmissible spongiform encephalopathies", "cryptococcal meningitis",
-            "coccidioidal meningitis", "histoplasmal meningitis", "blastomycosis", "paracoccidioidomycosis", "sporotrichosis", "chromoblastomycosis", "mycetoma",
-            "eumycetoma", "actinomycetoma", "nocardiosis", "actinomycosis", "botryomycosis", "rhinoscleroma", "granulomatous amebic encephalitis",
-            "primary amebic meningoencephalitis", "Acanthamoeba keratitis", "Acanthamoeba granulomatous encephalitis", "Balamuthia mandrillaris encephalitis",
-            "Sappinia diploidea encephalitis", "toxoplasmosis", "toxoplasmic encephalitis", "congenital toxoplasmosis", "ocular toxoplasmosis", "neurosyphilis",
-            "tabes dorsalis", "general paresis", "meningovascular syphilis", "gumma", "sarcoidosis", "neurosarcoidosis", "cardiac sarcoidosis", "pulmonary sarcoidosis",
-            "ocular sarcoidosis", "cutaneous sarcoidosis", "osseous sarcoidosis", "hepatic sarcoidosis", "renal sarcoidosis", "endocrine sarcoidosis", "neuromuscular sarcoidosis"
+        # HOLISTIC APPROACH: Instead of specific topics, focus on consolidating and connecting everything
+        consolidation_types = [
+            "consolidate fundamental concepts across all domains",
+            "generate novel insights by connecting patterns from diverse knowledge areas",
+            "reflect on universal principles underlying reality and existence",
+            "synthesize connections between scientific, philosophical, and artistic knowledge",
+            "explore emergent properties from combining multiple fields of study",
+            "analyze underlying patterns that transcend disciplinary boundaries",
+            "develop comprehensive frameworks for understanding complex systems",
+            "investigate fundamental questions about consciousness, intelligence, and reality",
+            "connect mathematical principles with natural phenomena and human cognition",
+            "explore the relationships between information, energy, matter, and mind",
+            "synthesize knowledge about evolution, development, and transformation",
+            "analyze patterns of emergence and self-organization across scales",
+            "investigate the nature of complexity, chaos, and order in systems",
+            "explore connections between quantum mechanics and consciousness",
+            "synthesize understanding of networks, graphs, and relational structures",
+            "analyze fundamental processes of learning, adaptation, and intelligence",
+            "investigate universal algorithms underlying natural and artificial systems",
+            "explore the mathematics of beauty, symmetry, and aesthetic principles",
+            "connect principles of thermodynamics with information and computation",
+            "synthesize knowledge about time, causality, and temporal processes",
+            "analyze patterns of innovation, discovery, and scientific progress",
+            "investigate fundamental limits and possibilities of knowledge and understanding",
+            "explore connections between language, thought, and reality",
+            "synthesize understanding of cooperation, competition, and social dynamics",
+            "analyze universal principles of optimization and efficiency",
+            "investigate the nature of intelligence across biological and artificial systems",
+            "explore fundamental questions about meaning, purpose, and value",
+            "connect principles of physics, biology, psychology, and sociology",
+            "synthesize knowledge about prediction, uncertainty, and decision-making",
+            "analyze patterns of change, stability, and transformation in systems"
         ]
         
-        # Connecting concepts for combination
-        connecting_concepts = [
-            "and", "with", "using", "through", "via", "based on", "integrated with", "combined with",
-            "applied to", "in relation to", "concerning", "regarding", "about", "involving",
-            "incorporating", "utilizing", "employing", "featuring", "including", "encompassing",
-            "covering", "addressing", "exploring", "investigating", "examining", "analyzing",
-            "studying", "researching", "developing", "advancing", "improving", "enhancing",
-            "optimizing", "refining", "evolving", "transforming", "revolutionizing", "innovating",
-            "pioneering", "groundbreaking", "cutting-edge", "state-of-the-art", "advanced",
-            "sophisticated", "complex", "intricate", "elaborate", "detailed", "comprehensive"
+        # Select a consolidation goal
+        base_goal = random.choice(consolidation_types)
+        
+        # Add variations for depth and focus
+        goal_variations = [
+            f"Deep {base_goal}",
+            f"Comprehensive {base_goal}",
+            f"Systematic {base_goal}",
+            f"Advanced {base_goal}",
+            f"Fundamental {base_goal}",
+            f"Universal {base_goal}",
+            f"Integrated {base_goal}",
+            f"Holistic {base_goal}"
         ]
         
-        # Categorize domains for better diversity
-        domain_categories = {
-            'basic_sciences': ["biology", "chemistry", "physics", "mathematics", "astronomy", "geology", "oceanography", "meteorology", "ecology"],
-            'life_sciences': ["genetics", "neuroscience", "psychology", "microbiology", "virology", "immunology", "molecular biology", "cell biology", "developmental biology", "evolutionary biology", "biochemistry", "biophysics"],
-            'medical_sciences': ["medicine", "cardiology", "oncology", "radiology", "surgery", "anatomy", "physiology", "pathology", "toxicology", "endocrinology", "rheumatology", "dermatology", "ophthalmology", "otolaryngology", "urology", "gynecology", "pediatrics", "geriatrics", "sports medicine", "forensic science"],
-            'social_sciences': ["sociology", "anthropology", "archaeology", "history", "philosophy", "linguistics", "economics", "political science", "geography"],
-            'arts_humanities': ["music", "art", "literature", "theater", "dance", "architecture"],
-            'engineering_tech': ["engineering", "materials science", "nanotechnology", "biotechnology", "biomedical engineering", "environmental science"],
-            'specialized_medical': ["amyotrophic lateral sclerosis", "Huntington's disease", "Parkinson's disease", "Alzheimer's disease", "frontotemporal dementia", "vascular dementia", "Lewy body dementia", "corticobasal degeneration", "progressive supranuclear palsy", "multiple system atrophy", "spinocerebellar ataxias", "Friedreich's ataxia", "Machado-Joseph disease", "Wilson's disease", "Menkes disease", "prion diseases", "Creutzfeldt-Jakob disease", "variant Creutzfeldt-Jakob disease", "Gerstmann-Sträussler-Scheinker syndrome", "fatal familial insomnia", "kuru", "scrapie", "bovine spongiform encephalopathy", "chronic wasting disease", "transmissible mink encephalopathy", "feline spongiform encephalopathy", "exotic ungulate encephalopathy", "transmissible spongiform encephalopathies", "cryptococcal meningitis", "coccidioidal meningitis", "histoplasmal meningitis", "blastomycosis", "paracoccidioidomycosis", "sporotrichosis", "chromoblastomycosis", "mycetoma", "eumycetoma", "actinomycetoma", "nocardiosis", "actinomycosis", "botryomycosis", "rhinoscleroma", "granulomatous amebic encephalitis", "primary amebic meningoencephalitis", "Acanthamoeba keratitis", "Acanthamoeba granulomatous encephalitis", "Balamuthia mandrillaris encephalitis", "Sappinia diploidea encephalitis", "toxoplasmosis", "toxoplasmic encephalitis", "congenital toxoplasmosis", "ocular toxoplasmosis", "neurosyphilis", "tabes dorsalis", "general paresis", "meningovascular syphilis", "gumma", "sarcoidosis", "neurosarcoidosis", "cardiac sarcoidosis", "pulmonary sarcoidosis", "ocular sarcoidosis", "cutaneous sarcoidosis", "osseous sarcoidosis", "hepatic sarcoidosis", "renal sarcoidosis", "endocrine sarcoidosis", "neuromuscular sarcoidosis"],
-            'diagnostic_imaging': ["medical imaging", "diagnostic imaging", "therapeutic imaging", "interventional radiology", "nuclear medicine", "molecular imaging", "optical imaging", "ultrasound imaging", "magnetic resonance imaging", "computed tomography", "positron emission tomography", "single photon emission computed tomography", "bioluminescence imaging", "fluorescence imaging", "photoacoustic imaging", "elastography", "thermography", "electrical impedance tomography", "diffuse optical tomography", "near-infrared spectroscopy", "functional near-infrared spectroscopy", "electroencephalography", "magnetoencephalography", "transcranial magnetic stimulation", "transcranial direct current stimulation", "deep brain stimulation", "vagus nerve stimulation", "spinal cord stimulation", "peripheral nerve stimulation", "biofeedback", "neurofeedback", "heart rate variability", "galvanic skin response", "electromyography", "electroneurography", "nerve conduction studies", "evoked potentials", "polysomnography", "sleep medicine", "chronobiology"],
-            'biological_subfields': ["entomology", "ornithology", "herpetology", "ichthyology", "mammalogy", "botany", "mycology", "phycology", "bacteriology", "parasitology", "zoology", "ethology", "behavioral science", "cognitive science", "developmental psychology", "social psychology", "clinical psychology", "counseling psychology", "educational psychology", "industrial psychology", "forensic psychology", "sports psychology", "environmental psychology", "ecological genetics", "population genetics", "quantitative genetics", "biochemical genetics", "genomics", "proteomics", "metabolomics", "transcriptomics", "pharmacogenomics", "toxicogenomics", "nutrigenomics", "epigenetics", "chromosome biology", "nuclear biology", "organelle biology", "membrane biology", "cytoskeleton biology", "extracellular matrix biology", "signal transduction", "cell cycle regulation", "apoptosis", "autophagy", "necrosis", "inflammation", "immunity", "autoimmunity", "allergy", "hypersensitivity", "transplantation immunology", "tumor immunology", "vaccinology", "serology", "hematology", "coagulation", "thrombosis", "hemophilia", "anemia", "leukemia", "lymphoma", "myeloma", "myelodysplastic syndromes", "bone marrow transplantation", "stem cell biology", "regenerative medicine", "tissue engineering", "biomaterials", "prosthetics", "orthotics", "rehabilitation engineering", "assistive technology", "telemedicine", "e-health", "m-health", "health informatics"]
-        }
+        final_topic = f"{random.choice(goal_variations)} [{unique_hash}]"
         
-        # Generate completely novel topic by combining diverse domains with prioritization
-        attempts = 0
-        base_topic = None
-        
-        while attempts < 100:  # More attempts for truly novel generation
-            # Pick domains from different categories with priority weighting
-            # Higher priority categories are more likely to be selected
-            category_weights = {cat: self.domain_priorities.get(cat, 1.0) 
-                              for cat in domain_categories.keys()}
-            
-            selected_categories = []
-            available_categories = list(domain_categories.keys())
-            
-            # Select categories based on weights
-            while len(selected_categories) < min(3, len(available_categories)):
-                # Weighted random selection
-                total_weight = sum(category_weights[cat] for cat in available_categories 
-                                 if cat not in selected_categories)
-                if total_weight == 0:
-                    break
-                    
-                pick = random.uniform(0, total_weight)
-                current_weight = 0
-                
-                for cat in available_categories:
-                    if cat not in selected_categories:
-                        current_weight += category_weights[cat]
-                        if pick <= current_weight:
-                            selected_categories.append(cat)
-                            break
-            
-            # Ensure we have at least one category
-            if not selected_categories:
-                selected_categories = [random.choice(list(domain_categories.keys()))]
-            
-            selected_domains = []
-            
-            for category in selected_categories:
-                if domain_categories[category]:
-                    domain = random.choice(domain_categories[category])
-                    selected_domains.append(domain)
-            
-            # Ensure we have at least 2 domains
-            while len(selected_domains) < 2:
-                remaining_categories = [cat for cat in domain_categories.keys() if cat not in selected_categories]
-                if remaining_categories:
-                    new_cat = random.choice(remaining_categories)
-                    selected_categories.append(new_cat)
-                    domain = random.choice(domain_categories[new_cat])
-                    selected_domains.append(domain)
-                else:
-                    # Fallback to random from all domains
-                    selected_domains.append(random.choice(core_domains))
-            
-            # Pick a connecting concept
-            connector = random.choice(connecting_concepts)
-            
-            # Create novel combination
-            if len(selected_domains) == 2:
-                candidate_topic = f"{selected_domains[0]} {connector} {selected_domains[1]}"
-            else:
-                candidate_topic = f"{selected_domains[0]}, {selected_domains[1]} {connector} {selected_domains[2]}"
-            
-            # Check if this topic or similar topics are already mastered
-            is_already_mastered = False
-            for mastered in self.mastered_topics:
-                if self._topics_are_similar(candidate_topic, mastered):
-                    is_already_mastered = True
-                    break
-            
-            if not is_already_mastered:
-                base_topic = candidate_topic
-                break
-                
-            attempts += 1
-        
-        # If we couldn't find a fresh topic, use a more extreme combination
-        if base_topic is None:
-            # Use 4 domains for maximum novelty
-            selected_domains = random.sample(core_domains, 4)
-            connector1 = random.choice(connecting_concepts)
-            connector2 = random.choice(connecting_concepts)
-            base_topic = f"{selected_domains[0]} {connector1} {selected_domains[1]} {connector2} {selected_domains[2]} and {selected_domains[3]}"
-            self._report_to_gui(f"⚠️ Used extreme combination after 100 attempts: {base_topic}", "warning")
-        
-        # Add unique variations with timestamp for guaranteed uniqueness
-        variations = [
-            f"exploring {base_topic}",
-            f"advanced research in {base_topic}",
-            f"breakthrough developments in {base_topic}", 
-            f"future implications of {base_topic}",
-            f"innovative approaches to {base_topic}",
-            f"comprehensive analysis of {base_topic}",
-            f"systematic investigation of {base_topic}",
-            f"pioneering work in {base_topic}",
-            f"cutting-edge developments in {base_topic}",
-            f"state-of-the-art research in {base_topic}"
-        ]
-        
-        final_topic = f"{random.choice(variations)} [{unique_hash}]"
-        
-        # Create ultra-high priority forced discovery goal
-        forced_goal = LearningGoal(
-            id=f"dynamic_discovery_{unique_hash}",
+        # Create high-priority consolidation goal
+        consolidation_goal = LearningGoal(
+            id=f"holistic_consolidation_{unique_hash}",
             topic=final_topic,
-            priority=0.98,  # Even higher priority for dynamic generation
-            knowledge_gap=f"Dynamic Discovery Engine: {final_topic}",
-            target_depth=4,
+            priority=0.95,  # High priority for consolidation
+            knowledge_gap=f"Holistic Consolidation: {final_topic}",
+            target_depth=5,  # Deeper analysis for consolidation
             created_at=datetime.now(),
-            estimated_duration=50,
+            estimated_duration=60,  # Longer time for deep consolidation
             prerequisites=[],
             status="pending"
         )
         
         # Add to goals queue
-        self.learning_goals.append(forced_goal)
+        self.learning_goals.append(consolidation_goal)
         
-        self._report_to_gui(f"🚀 DYNAMIC DISCOVERY: {final_topic}", "emergency")
-        self.logger.info(f"Dynamic Discovery Engine created: {final_topic}")
+        self._report_to_gui(f"🧠 HOLISTIC CONSOLIDATION: {final_topic}", "emergency")
+        self.logger.info(f"Holistic Consolidation Engine created: {final_topic}")
         
-        forced_goal.status = "active"
-        return forced_goal
+        consolidation_goal.status = "active"
+        return consolidation_goal
     
     def _execute_learning_goal(self):
         """Execute the active learning goal with deep research"""
@@ -1691,7 +1593,7 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
                 self.active_goal = None
     
     def _deep_research(self, topic: str) -> Dict[str, Any]:
-        """Conduct deep research on a topic with Phase 2 enhanced capabilities"""
+        """Conduct deep internal knowledge consolidation for holistic understanding"""
         research_results = {
             'topic': topic,
             'sources': [],
@@ -1699,89 +1601,113 @@ List 2-3 specific learning topics that would directly improve our usefulness."""
             'connections': [],
             'questions_raised': [],
             'web_research': None,
-            'research_quality': 'basic'
+            'research_quality': 'holistic_consolidation'
         }
         
         try:
-            # Phase 2: Enhanced Web Research
-            if self.web_researcher and self.web_research_enabled:
-                logger.info("Phase 2: Conducting comprehensive web research on %s", topic)
-                
-                # Run async web research
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    web_results = loop.run_until_complete(
-                        self.web_researcher.comprehensive_research(topic, self.research_depth)
-                    )
-                    research_results['web_research'] = web_results
-                    research_results['research_quality'] = 'enhanced'
-                    
-                    # Extract key insights from web research
-                    if web_results.get('synthesis'):
-                        synthesis = web_results['synthesis']
-                        research_results['key_concepts'].extend(
-                            synthesis.get('key_concepts', [])[:5]
-                        )
-                        research_results['sources'].append({
-                            'type': 'web_synthesis',
-                            'content': synthesis.get('summary', ''),
-                            'confidence': synthesis.get('confidence_score', 0.5),
-                            'source_count': synthesis.get('source_count', 0)
-                        })
-                    
-                    logger.info("Web research completed: %d sources processed", web_results.get('sources_processed', 0))
-                    
-                finally:
-                    loop.close()
+            # HOLISTIC APPROACH: Focus on internal knowledge consolidation
+            logger.info("🧠 Conducting holistic knowledge consolidation on: %s", topic)
             
-            # Use traditional research assistant if available
-            if self.research_assistant:
-                logger.info("Conducting traditional research on %s", topic)
-                research_data = self.research_assistant.research_topic(topic)
-                if research_data:
-                    research_results['sources'].append(research_data)
-            
-            # Search knowledge base for related information
+            # Query existing knowledge base for related concepts
             if self.knowledge_base:
-                related_knowledge = self.knowledge_base.search(topic, limit=10)
+                # Get broader search results for consolidation
+                related_knowledge = self.knowledge_base.search(topic, limit=20)
                 research_results['connections'].extend(related_knowledge)
+                
+                # Extract key concepts from knowledge base
+                for item in related_knowledge[:10]:
+                    if 'content' in item:
+                        # Extract potential key concepts from content
+                        concepts = self._extract_key_concepts_from_text(item['content'])
+                        research_results['key_concepts'].extend(concepts)
             
-            # Generate research questions
-            research_questions = self._generate_research_questions(topic)
-            research_results['questions_raised'].extend(research_questions)
+            # Use LLM to generate consolidation insights from existing knowledge
+            if self.llm_interface and hasattr(self.llm_interface, 'generate_response'):
+                consolidation_prompt = f"""As an AGI focused on holistic understanding, consolidate and synthesize knowledge about: {topic}
+
+Based on your existing knowledge across all domains, generate:
+1. Key patterns and connections between different fields
+2. Universal principles that emerge from this consolidation
+3. Novel insights that arise from connecting disparate concepts
+4. Questions that reveal deeper understanding
+
+Focus on synthesis rather than specific facts. Think about how everything connects."""
+
+                ai_response = self._gpu_enhanced_llm_call(
+                    consolidation_prompt,
+                    {"type": "holistic_consolidation", "topic": topic},
+                    "Knowledge Consolidation"
+                )
+                
+                if ai_response:
+                    research_results['sources'].append({
+                        'type': 'internal_synthesis',
+                        'content': ai_response,
+                        'confidence': 0.85,
+                        'method': 'llm_consolidation'
+                    })
+                    
+                    # Extract key concepts from AI response
+                    concepts = self._extract_key_concepts_from_text(ai_response)
+                    research_results['key_concepts'].extend(concepts[:10])  # Limit to top 10
+            
+            # Generate consolidation questions that promote deeper understanding
+            consolidation_questions = self._generate_consolidation_questions(topic)
+            research_results['questions_raised'].extend(consolidation_questions)
+            
+            # Add existing insights as sources for consolidation
+            if hasattr(self, 'insights') and self.insights:
+                relevant_insights = [insight for insight in self.insights.values() 
+                                   if any(keyword in insight.content.lower() 
+                                         for keyword in topic.lower().split())][:5]
+                for insight in relevant_insights:
+                    research_results['sources'].append({
+                        'type': 'existing_insight',
+                        'content': insight.content,
+                        'confidence': insight.confidence,
+                        'connections': insight.connections
+                    })
             
         except Exception as e:
-            logger.error(f"Error in deep research: {e}")
+            logger.error(f"Error in holistic consolidation: {e}")
         
         return research_results
     
     def _analyze_research_results(self, research_results: Dict, topic: str) -> List[Insight]:
-        """Analyze research results and generate insights using RTX 4090 Beast Mode"""
+        """Analyze consolidated knowledge and generate holistic insights using RTX 4090 Beast Mode"""
         insights = []
         
         try:
             if self.llm_interface and hasattr(self.llm_interface, 'generate_response'):
-                # 🚀 RTX 4090 BEAST MODE: Deep analysis of research results
-                web_content = research_results.get('web_research', {}).get('synthesis', {})
+                # HOLISTIC ANALYSIS: Deep synthesis of consolidated knowledge
+                internal_content = ""
+                for source in research_results.get('sources', []):
+                    if source.get('type') == 'internal_synthesis':
+                        internal_content = source.get('content', '')
+                        break
                 
-                analysis_prompt = f"""As an expert analyst, deeply analyze this research on '{topic}':
+                key_concepts = research_results.get('key_concepts', [])[:10]
+                connections = research_results.get('connections', [])[:5]
+                
+                analysis_prompt = f"""As an AGI focused on holistic understanding, analyze this consolidated knowledge about '{topic}':
 
-Research Summary: {web_content.get('summary', 'Basic research conducted')}
-Key Concepts: {', '.join(web_content.get('key_concepts', [])[:5])}
-Source Count: {web_content.get('source_count', 0)}
+Internal Synthesis: {internal_content[:500]}...
+Key Concepts: {', '.join(key_concepts)}
+Knowledge Connections: {len(connections)} related items found
 
-Generate 3 profound insights that:
-1. Reveal deeper patterns or connections
-2. Challenge conventional thinking  
-3. Suggest novel applications or implications
+Generate 5 profound holistic insights that:
+1. Reveal universal patterns across domains
+2. Connect disparate fields of knowledge
+3. Suggest fundamental principles underlying reality
+4. Challenge reductionist thinking
+5. Propose novel frameworks for understanding complexity
 
-Be creative, analytical, and demonstrate advanced reasoning. Each insight should be 1-2 sentences."""
+Focus on synthesis, emergence, and interconnectedness. Each insight should be 1-2 sentences demonstrating deep integrative thinking."""
 
                 ai_response = self._gpu_enhanced_llm_call(
                     analysis_prompt,
-                    {"type": "research_analysis", "topic": topic, "research_data": research_results},
-                    "Research Analysis & Insight Generation"
+                    {"type": "holistic_analysis", "topic": topic, "consolidated_data": research_results},
+                    "Holistic Knowledge Analysis & Insight Generation"
                 )
                 
                 if ai_response:
@@ -1790,26 +1716,26 @@ Be creative, analytical, and demonstrate advanced reasoning. Each insight should
                     insight_count = 0
                     
                     for line in lines:
-                        if line and insight_count < 3:
+                        if line and insight_count < 5:
                             # Clean up formatting (remove numbers, bullets, etc.)
                             content = line
-                            for prefix in ['1.', '2.', '3.', '-', '•', '*']:
+                            for prefix in ['1.', '2.', '3.', '4.', '5.', '-', '•', '*']:
                                 if content.startswith(prefix):
                                     content = content[len(prefix):].strip()
                             
-                            if len(content) > 20:  # Ensure it's substantial
+                            if len(content) > 20:  # Ensure meaningful content
                                 insight = Insight(
-                                    id=f"ai_insight_{int(time.time())}_{insight_count}",
+                                    id=f"holistic_insight_{int(time.time())}_{insight_count}",
                                     content=content,
-                                    confidence=0.8 + random.random() * 0.2,
-                                    connections=[topic],
+                                    confidence=0.8 + random.random() * 0.2,  # High confidence for holistic insights
+                                    connections=[topic] + [str(c.get('id', '')) for c in connections[:3]],
                                     created_at=datetime.now()
                                 )
                                 insights.append(insight)
                                 insight_count += 1
                     
                     if insights:
-                        self.logger.info(f"🧠 RTX 4090 generated {len(insights)} deep insights for: {topic}")
+                        self.logger.info(f"🧠 RTX 4090 generated {len(insights)} holistic insights for: {topic}")
                         return insights
                         
             # Fallback pattern extraction if AI not available
@@ -3325,7 +3251,60 @@ class CuriosityEngine:
         if hasattr(self, 'parent_learner') and self.parent_learner:
             self.parent_learner.exploration_rate = min(1.0, self.parent_learner.exploration_rate + boost_amount)
     
-    def get_unexplored_interesting_topics(self) -> List[str]:
-        """Get interesting but unexplored topics"""
-        all_interesting = self.get_interesting_topics()
-        return [t for t in all_interesting if t not in self.explored_topics]
+    def set_learning_mode(self, mode: str):
+        """Set the learning mode: 'holistic' (default AGI mode) or 'focused' (user-directed)"""
+        if mode in ['holistic', 'focused']:
+            self.learning_mode = mode
+            self._report_to_gui(f"🧠 Learning mode set to: {mode}", "info")
+            self.logger.info(f"Learning mode changed to: {mode}")
+        else:
+            self._report_to_gui(f"❌ Invalid learning mode: {mode}. Use 'holistic' or 'focused'", "error")
+    
+    def _extract_key_concepts_from_text(self, text: str) -> List[str]:
+        """Extract key concepts from text for knowledge consolidation"""
+        concepts = []
+        try:
+            # Simple extraction based on capitalization and length
+            words = text.split()
+            for word in words:
+                word = word.strip('.,!?()[]{}:;"\'').lower()
+                if len(word) > 4 and word[0].isupper() and word not in ['that', 'this', 'with', 'from', 'they', 'have', 'been', 'were', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those']:
+                    concepts.append(word)
+            
+            # Also extract noun phrases (simplified)
+            sentences = text.split('.')
+            for sentence in sentences:
+                if ' and ' in sentence.lower():
+                    parts = sentence.lower().split(' and ')
+                    for part in parts:
+                        if len(part.strip()) > 10:
+                            concepts.append(part.strip()[:50])
+            
+            # Remove duplicates and limit
+            concepts = list(set(concepts))[:10]
+            
+        except Exception as e:
+            # Use parent logger if available
+            if hasattr(self, 'parent_learner') and self.parent_learner and hasattr(self.parent_learner, 'logger'):
+                self.parent_learner.logger.error(f"Error extracting concepts: {e}")
+        
+        return concepts
+    
+    def _generate_consolidation_questions(self, topic: str) -> List[str]:
+        """Generate questions that promote holistic understanding and consolidation"""
+        questions = [
+            f"How does {topic} connect to fundamental principles across different domains?",
+            f"What universal patterns emerge when consolidating knowledge about {topic}?",
+            f"How might {topic} reveal insights about the nature of intelligence and consciousness?",
+            f"What connections exist between {topic} and the fundamental laws of physics?",
+            f"How does {topic} relate to evolutionary processes and adaptation?",
+            f"What mathematical principles underlie {topic}?",
+            f"How might {topic} inform our understanding of complexity and emergence?",
+            f"What ethical and philosophical implications arise from {topic}?",
+            f"How does {topic} connect to information theory and computation?",
+            f"What novel applications emerge from synthesizing {topic} with other fields?"
+        ]
+        
+        # Randomly select 5 questions
+        import random
+        return random.sample(questions, min(5, len(questions)))
