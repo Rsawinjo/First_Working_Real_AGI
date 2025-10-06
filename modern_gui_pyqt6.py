@@ -7,6 +7,8 @@ import sys
 import random
 import os
 import logging
+import torch
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QFrame, QScrollArea,
@@ -393,12 +395,83 @@ class ModernAGIGUI(QMainWindow):
         chat_tab.setLayout(chat_layout)
         self.main_tabs.addTab(chat_tab, "💬 Chat")
 
-        # Learning tab
+        # Learning tab - Comprehensive AGI Learning Dashboard
         learning_tab = QWidget()
         learning_layout = QVBoxLayout()
 
-        learning_display = QTextEdit()
-        learning_display.setStyleSheet(f"""
+        # Top stats bar
+        stats_layout = QHBoxLayout()
+
+        # Session stats cards
+        self.goals_completed_label = QLabel("Goals: 0")
+        self.goals_completed_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {COLORS['bg_tertiary']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+        """)
+
+        self.insights_generated_label = QLabel("Insights: 0")
+        self.insights_generated_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {COLORS['bg_tertiary']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+        """)
+
+        self.breakthroughs_label = QLabel("Breakthroughs: 0")
+        self.breakthroughs_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {COLORS['bg_tertiary']};
+                color: {COLORS['accent_green']};
+                border: 1px solid {COLORS['accent_green']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+        """)
+
+        self.current_goal_label = QLabel("Current Goal: None")
+        self.current_goal_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {COLORS['bg_tertiary']};
+                color: {COLORS['accent_blue']};
+                border: 1px solid {COLORS['accent_blue']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+        """)
+
+        stats_layout.addWidget(self.goals_completed_label)
+        stats_layout.addWidget(self.insights_generated_label)
+        stats_layout.addWidget(self.breakthroughs_label)
+        stats_layout.addWidget(self.current_goal_label)
+        stats_layout.addStretch()
+
+        learning_layout.addLayout(stats_layout)
+
+        # Main content splitter
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Learning log display (top section)
+        log_group = QGroupBox("🧠 AGI Learning Activity Log")
+        log_layout = QVBoxLayout()
+
+        self.learning_display = QTextEdit()
+        self.learning_display.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {COLORS['bg_secondary']};
                 color: {COLORS['text_primary']};
@@ -409,7 +482,34 @@ class ModernAGIGUI(QMainWindow):
                 font-size: 10px;
             }}
         """)
-        learning_layout.addWidget(learning_display)
+        self.learning_display.setMaximumHeight(300)
+        log_layout.addWidget(self.learning_display)
+        log_group.setLayout(log_layout)
+
+        # Insights and goals display (bottom section)
+        insights_group = QGroupBox("💡 Recent Insights & Goals")
+        insights_layout = QVBoxLayout()
+
+        self.insights_display = QTextEdit()
+        self.insights_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['bg_secondary']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: 'Segoe UI';
+                font-size: 11px;
+            }}
+        """)
+        insights_layout.addWidget(self.insights_display)
+        insights_group.setLayout(insights_layout)
+
+        splitter.addWidget(log_group)
+        splitter.addWidget(insights_group)
+        splitter.setSizes([400, 300])
+
+        learning_layout.addWidget(splitter)
 
         learning_tab.setLayout(learning_layout)
         self.main_tabs.addTab(learning_tab, "🧠 Learning")
@@ -488,10 +588,10 @@ class ModernAGIGUI(QMainWindow):
             try:
                 if self.autonomous_learner:
                     # Get real status from autonomous learner
-                    if hasattr(self.autonomous_learner, 'get_current_status'):
-                        status_info = self.autonomous_learner.get_current_status()
-                        status_text = status_info.get('status', 'ACTIVE')
-                        color = status_info.get('color', 'accent_green')
+                    if hasattr(self.autonomous_learner, 'get_status'):
+                        status_info = self.autonomous_learner.get_status()
+                        status_text = status_info.get('current_state', 'ACTIVE')
+                        color = 'accent_green'  # Default color
                         self.status_monitor.agi_status.update_status(status_text, color)
                     else:
                         # Fallback to simulated status
@@ -521,6 +621,10 @@ class ModernAGIGUI(QMainWindow):
         except Exception as e:
             # Fallback to static status
             self.status_monitor.gpu_status.update_status("🚀 RTX 4090 ACTIVE - 17.2GB", "accent_green")
+        
+        # Update learning stats when AGI is active
+        if "Start" not in self.agi_button.text():
+            self._update_learning_stats()
 
     def update_progress(self):
         """Update learning progress when AGI is active"""
@@ -546,6 +650,8 @@ class ModernAGIGUI(QMainWindow):
                 if self.autonomous_learner is None:
                     from ai_core.autonomous_learner import AutonomousLearner
                     self.autonomous_learner = AutonomousLearner()
+                    # Set GUI callback for logging
+                    self.autonomous_learner.gui_callback = self._add_learning_log
                     self.chat_display.append("AGI: Autonomous Learning Engine initialized!\n")
                 
                 # Start autonomous learning
@@ -562,6 +668,9 @@ class ModernAGIGUI(QMainWindow):
                 
                 self.status_monitor.agi_status.update_status("ACTIVE", "accent_green")
                 self.status_bar.showMessage("AGI Core Active - Autonomous Learning Enabled")
+                
+                # Update learning stats immediately
+                self._update_learning_stats()
                 
             except Exception as e:
                 self.chat_display.append(f"AGI: Error starting autonomous learning: {e}\n")
@@ -587,6 +696,51 @@ class ModernAGIGUI(QMainWindow):
             # Stop status updates
             self.status_timer.stop()
             self.learning_active = False
+
+    def _update_learning_stats(self):
+        """Update learning statistics from autonomous learner"""
+        if self.autonomous_learner:
+            try:
+                # Get session stats
+                status = self.autonomous_learner.get_status()
+                session_stats = status.get('session_stats', {})
+                
+                # Update stat labels
+                goals = session_stats.get('goals_completed', 0)
+                insights = session_stats.get('insights_generated', 0)
+                breakthroughs = session_stats.get('breakthroughs', 0)
+                active_goal = status.get('active_goal', 'None')
+                
+                self.goals_completed_label.setText(f"Goals: {goals}")
+                self.insights_generated_label.setText(f"Insights: {insights}")
+                self.breakthroughs_label.setText(f"Breakthroughs: {breakthroughs}")
+                self.current_goal_label.setText(f"Current Goal: {active_goal}")
+                
+                # Update insights display
+                insights_summary = self.autonomous_learner.get_insights_summary()
+                insights_text = "Recent AGI Insights:\n\n"
+                for insight in insights_summary[-5:]:  # Show last 5 insights
+                    insights_text += f"• {insight['content']}\n"
+                    insights_text += f"  Confidence: {insight['confidence']:.2f}\n\n"
+                
+                self.insights_display.setPlainText(insights_text)
+                
+            except Exception as e:
+                self.logger.error(f"Error updating learning stats: {e}")
+
+    def _add_learning_log(self, message, level="info"):
+        """Add message to learning log display"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_message = f"[{timestamp}] {message}\n"
+        
+        # Add to learning display
+        current_text = self.learning_display.toPlainText()
+        self.learning_display.setPlainText(current_text + log_message)
+        
+        # Auto-scroll to bottom
+        cursor = self.learning_display.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.learning_display.setTextCursor(cursor)
 
     def _send_message(self):
         """Send user message to AI"""
